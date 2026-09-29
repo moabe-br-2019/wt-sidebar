@@ -3,7 +3,7 @@ param([string]$Out = (Join-Path $PSScriptRoot 'WtSidebar.exe'))
 $ErrorActionPreference = 'Stop'
 $fw  = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
 $wpf = Join-Path $fw 'WPF'
-& (Join-Path $fw 'csc.exe') /nologo /target:winexe /platform:x64 /optimize+ /codepage:65001 `
+& (Join-Path $fw 'csc.exe') /nologo /target:winexe /platform:x64 /optimize+ /codepage:65001 /win32icon:"$PSScriptRoot\WtSidebar.ico" `
     /out:"$Out" `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll `
     /r:"$wpf\UIAutomationClient.dll" /r:"$wpf\UIAutomationTypes.dll" /r:"$wpf\WindowsBase.dll" `

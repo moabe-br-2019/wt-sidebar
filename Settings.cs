@@ -148,6 +148,7 @@ namespace WtSidebar
         {
             this.scale = scale;
             Text = L.T("Configurações do WT Sidebar", "WT Sidebar settings");
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = MinimizeBox = false;
             ShowInTaskbar = true;

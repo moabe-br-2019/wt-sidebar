@@ -1,3 +1,5 @@
+<img src="docs/icon.png" width="96" align="right" alt="">
+
 # WT Sidebar
 
 Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to the left edge of the terminal window, so the official Windows Terminal keeps working and updating unchanged.
