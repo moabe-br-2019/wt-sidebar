@@ -42,12 +42,14 @@ namespace WtSidebar
         public bool AutoUpdate { get; set; }
         public int Width { get; set; }
         public bool StartCollapsed { get; set; }
+        public bool TrayIcon { get; set; }
         public List<AgentCommand> Agents { get; set; }
 
         public AppSettings()
         {
             Language = "auto";
             AutoUpdate = true;
+            TrayIcon = true;
             Width = 220;
             Agents = new List<AgentCommand>
             {
@@ -135,6 +137,7 @@ namespace WtSidebar
         readonly ComboBox language = new ComboBox();
         readonly CheckBox startWithWindows = new CheckBox();
         readonly CheckBox autoUpdate = new CheckBox();
+        readonly CheckBox trayIcon = new CheckBox();
         readonly NumericUpDown width = new NumericUpDown();
         readonly CheckBox startCollapsed = new CheckBox();
         readonly DataGridView agents = new DataGridView();
@@ -148,7 +151,8 @@ namespace WtSidebar
         {
             this.scale = scale;
             Text = L.T("Configurações do WT Sidebar", "WT Sidebar settings");
-            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
+            var icon = SidebarForm.AppIcon(0);
+            if (icon != null) Icon = icon;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = MinimizeBox = false;
             ShowInTaskbar = true;
@@ -156,7 +160,7 @@ namespace WtSidebar
             BackColor = Back;
             ForeColor = Fg;
             Font = new Font("Segoe UI", 12f * scale, GraphicsUnit.Pixel);
-            ClientSize = new Size(S(460), S(520));
+            ClientSize = new Size(S(460), S(550));
 
             int x = S(20), y = S(18), w = ClientSize.Width - S(40);
 
@@ -179,6 +183,7 @@ namespace WtSidebar
 
             AddCheck(startCollapsed, L.T("Começar recolhida", "Start collapsed"), current.StartCollapsed, x, ref y);
             AddCheck(startWithWindows, L.T("Iniciar com o Windows", "Start with Windows"), AppSettings.StartWithWindows, x, ref y);
+            AddCheck(trayIcon, L.T("Mostrar ícone na área de notificação", "Show icon in the notification area"), current.TrayIcon, x, ref y);
             AddCheck(autoUpdate, L.T("Buscar atualizações automaticamente", "Check for updates automatically"), current.AutoUpdate, x, ref y);
             y += S(10);
 
@@ -285,6 +290,7 @@ namespace WtSidebar
                 Width = (int)width.Value,
                 StartCollapsed = startCollapsed.Checked,
                 AutoUpdate = autoUpdate.Checked,
+                TrayIcon = trayIcon.Checked,
                 Agents = new List<AgentCommand>()
             };
             foreach (DataGridViewRow row in agents.Rows)

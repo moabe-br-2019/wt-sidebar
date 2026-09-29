@@ -97,6 +97,8 @@ namespace WtSidebar
         float scale = 1f;
         Font itemFont;
         Font glyphFont;
+        Bitmap headerIcon; // icone do app no cabecalho, no tamanho da escala atual
+        readonly NotifyIcon trayIcon = new NotifyIcon();
 
         readonly System.Windows.Forms.Timer findTimer = new System.Windows.Forms.Timer();
         System.Threading.Timer scanTimer;
@@ -132,6 +134,7 @@ namespace WtSidebar
             L.Apply(settings.Language);
             collapsed = settings.StartCollapsed;
             BuildMenus();
+            SetupTrayIcon();
             updateItem.Click += delegate { CheckUpdatesAsync(true); };
             findTimer.Interval = 1000;
             findTimer.Tick += delegate { EnsureAttached(); };
@@ -196,7 +199,17 @@ namespace WtSidebar
             }
         }
 
+        bool settingsOpen; // o duplo clique na bandeja nao abre uma segunda janela
+
         void ShowSettings()
+        {
+            if (settingsOpen) return;
+            settingsOpen = true;
+            try { ShowSettingsDialog(); }
+            finally { settingsOpen = false; }
+        }
+
+        void ShowSettingsDialog()
         {
             using (var dlg = new SettingsForm(settings, scale))
             {
@@ -207,10 +220,31 @@ namespace WtSidebar
                 L.Apply(settings.Language);
                 BuildMenus();
                 if (collapseChanged) collapsed = settings.StartCollapsed;
+                trayIcon.Visible = settings.TrayIcon;
                 HandleLocation();
                 Invalidate();
             }
         }
+
+        // Icone na area de notificacao: mesmo menu do cabecalho (clique esquerdo ou direito);
+        // duplo clique abre as configuracoes.
+        void SetupTrayIcon()
+        {
+            trayIcon.Text = "WT Sidebar";
+            trayIcon.Icon = AppIcon(SystemInformation.SmallIconSize.Width);
+            trayIcon.ContextMenuStrip = appMenu;
+            trayIcon.DoubleClick += delegate { ShowSettings(); };
+            trayIcon.MouseUp += delegate (object sender, MouseEventArgs e)
+            {
+                if (e.Button != MouseButtons.Left) return;
+                // O NotifyIcon so abre o menu sozinho no clique direito; ShowContextMenu e privado.
+                var show = typeof(NotifyIcon).GetMethod("ShowContextMenu",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (show != null) show.Invoke(trayIcon, null);
+            };
+            trayIcon.Visible = settings.TrayIcon;
+        }
+
         protected override bool ShowWithoutActivation { get { return true; } }
 
         protected override CreateParams CreateParams
@@ -232,6 +266,25 @@ namespace WtSidebar
             if (glyphFont != null) glyphFont.Dispose();
             itemFont = new Font("Segoe UI", 13f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             glyphFont = new Font("Segoe UI", 15f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            if (headerIcon != null) headerIcon.Dispose();
+            using (var ico = AppIcon(HeaderIconSize))
+                headerIcon = ico != null ? ico.ToBitmap() : null;
+        }
+
+        int HeaderIconSize { get { return S(18); } }
+
+        // Icone embutido no exe como recurso (build.ps1 /resource). size 0 = o .ico com todos os tamanhos.
+        public static Icon AppIcon(int size)
+        {
+            try
+            {
+                using (var s = typeof(SidebarForm).Assembly.GetManifestResourceStream("WtSidebar.ico"))
+                {
+                    if (s == null) return null;
+                    return size > 0 ? new Icon(s, size, size) : new Icon(s);
+                }
+            }
+            catch (Exception ex) { Log(ex); return null; }
         }
 
         protected override void OnLoad(EventArgs e)
@@ -259,6 +312,8 @@ namespace WtSidebar
             if (scanTimer != null) scanTimer.Dispose();
             Unhook();
             SetHotkey(false);
+            trayIcon.Visible = false; // senao o icone fica na bandeja ate passar o mouse
+            trayIcon.Dispose();
             if (pseudoMax && wt != IntPtr.Zero && Native.IsWindow(wt))
             {
                 Native.ShowWindow(wt, Native.SW_MAXIMIZE);
@@ -1183,7 +1238,8 @@ namespace WtSidebar
         {
             int pad = S(12);
             int textW = TextRenderer.MeasureText("WT Sidebar", itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
-            return new Rectangle(pad - S(6), S(4), textW + S(22), ListTop - S(8));
+            int iconW = headerIcon != null ? HeaderIconSize + S(8) : 0;
+            return new Rectangle(pad - S(6), S(4), iconW + textW + S(22), ListTop - S(8));
         }
 
         int HitTest(Point p)
@@ -1292,7 +1348,9 @@ namespace WtSidebar
                 if (hover == HitToggle)
                     using (var b = new SolidBrush(HoverBg))
                         g.FillRectangle(b, headerRect);
-                TextRenderer.DrawText(g, "»", glyphFont, headerRect, FgDim, flags | TextFormatFlags.HorizontalCenter);
+                // Recolhida: so o icone do app, que expande ao clicar.
+                if (headerIcon != null) DrawHeaderIcon(g, (w - HeaderIconSize) / 2);
+                else TextRenderer.DrawText(g, "»", glyphFont, headerRect, FgDim, flags | TextFormatFlags.HorizontalCenter);
             }
             else
             {
@@ -1304,12 +1362,18 @@ namespace WtSidebar
 
                 // "WT Sidebar ⌄": abre o menu do app (versao, atualizacoes, configuracoes, fechar)
                 string label = "WT Sidebar";
+                int textX = pad;
+                if (headerIcon != null)
+                {
+                    DrawHeaderIcon(g, pad);
+                    textX += HeaderIconSize + S(8);
+                }
                 int textW = TextRenderer.MeasureText(g, label, itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
-                TextRenderer.DrawText(g, label, itemFont, new Rectangle(pad, 0, textW + S(4), ListTop), FgDim, flags | TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, label, itemFont, new Rectangle(textX, 0, textW + S(4), ListTop), FgDim, flags | TextFormatFlags.NoPadding);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 using (var pen = new Pen(FgDim, Math.Max(1f, 1.3f * scale)))
                 {
-                    float cx = pad + textW + S(10), cy = ListTop / 2f, k = S(3);
+                    float cx = textX + textW + S(10), cy = ListTop / 2f, k = S(3);
                     g.DrawLines(pen, new[] { new PointF(cx - k, cy - k / 2), new PointF(cx, cy + k / 2), new PointF(cx + k, cy - k / 2) });
                 }
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
@@ -1414,6 +1478,14 @@ namespace WtSidebar
 
             using (var p = new Pen(Border))
                 g.DrawLine(p, w - 1, 0, w - 1, ClientSize.Height);
+        }
+
+        void DrawHeaderIcon(Graphics g, int x)
+        {
+            var mode = g.InterpolationMode;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.DrawImage(headerIcon, new Rectangle(x, (ListTop - HeaderIconSize) / 2, HeaderIconSize, HeaderIconSize));
+            g.InterpolationMode = mode;
         }
 
         protected override void OnMouseMove(MouseEventArgs e)

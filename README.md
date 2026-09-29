@@ -12,7 +12,7 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 - The `⌄` menu also lists agent commands (**Claude Code in**, **Codex in**, and any you add in Settings): each opens a new tab in a recent folder (or one you pick) running that command. The last 10 folders are kept in `%LOCALAPPDATA%\WtSidebar\recent-folders.txt`.
 - Right click a tab for the same actions as the terminal's own tab menu (color, rename, duplicate, split, move, export, find, close).
 - Follows the terminal when it moves, resizes or minimizes. A maximized terminal becomes "work area minus the sidebar"; maximizing again restores the previous size.
-- `Ctrl+Shift+B` (while the terminal is focused) or the `«` button collapses it to a narrow icon column.
+- `Ctrl+Shift+B` (while the terminal is focused) or the `«` button collapses it to a narrow icon column; the app icon in the header expands it again.
 - English or Portuguese interface, following the Windows language by default.
 
 ## Settings
@@ -22,6 +22,7 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 - Language: automatic (Windows language), Portuguese or English.
 - Width (160 to 400 px) and whether it starts collapsed.
 - Start with Windows (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
+- Show the icon in the notification area (on by default): click it for the same menu as the header, double click for Settings.
 - Check for updates automatically. When off, the app only goes online when you click **Check for updates**.
 - Agent commands: name and command of each entry in the `⌄` menu (for example `Gemini` / `gemini`). The command runs in PowerShell, in a new tab, in the chosen folder.
 - **Set up Windows Terminal**: applies the terminal settings below again (for example after resetting the terminal).
