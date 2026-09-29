@@ -1,6 +1,6 @@
 # Instalador do WT Sidebar. Baixa o codigo da ultima release do GitHub, compila com o csc que ja vem
-# no Windows, copia para %LOCALAPPDATA%\Programs\WtSidebar, cria atalhos no menu Iniciar e na
-# inicializacao do Windows e abre o app. Rodar de novo reinstala por cima.
+# no Windows, copia para %LOCALAPPDATA%\Programs\WtSidebar, cria atalho no menu Iniciar, liga o inicio
+# com o Windows (HKCU\...\Run), configura os atalhos do terminal e abre o app. Rodar de novo reinstala por cima.
 #
 #   irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1 | iex
 #
@@ -8,16 +8,21 @@
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1))) -NoStartup
 #
 #   -Ref v1.2.0   instala essa tag ou branch em vez da ultima release
-#   -NoStartup    sem atalho na inicializacao do Windows
+#   -NoStartup    nao inicia com o Windows
 #   -NoKeys       nao adiciona ao settings.json do terminal os atalhos que o menu de aba usa
 #   -NoLaunch     nao abre o app no fim
 #   -Uninstall    remove app e atalhos (mantem as pastas recentes)
+#   -Lang en      mensagens em ingles (ou pt); por padrao segue o idioma do Windows
 #   -Update       usado pelo menu "Atualizar" do app: roda escondido, grava log e avisa se falhar
+#   -KeysOnly     so configura os atalhos do terminal (botao nas configuracoes do app)
 #
 # Rodado de dentro de um clone (.\install.ps1, sem -Ref), instala o codigo local.
-param([string]$Ref, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch, [switch]$Uninstall, [switch]$Update)
+param([string]$Ref, [string]$Lang, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch,
+      [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly)
 
-function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]$NoLaunch, [bool]$Uninstall, [bool]$Update, [string]$ScriptDir) {
+function Install-WtSidebar {
+    param([string]$Ref, [string]$Lang, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch,
+          [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly, [string]$ScriptDir)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -27,7 +32,16 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
     $exe        = Join-Path $installDir 'WtSidebar.exe'
     $dataDir    = Join-Path $env:LOCALAPPDATA 'WtSidebar'
     $startLnk   = Join-Path ([Environment]::GetFolderPath('Programs')) 'WT Sidebar.lnk'
-    $bootLnk    = Join-Path ([Environment]::GetFolderPath('Startup')) 'WtSidebar.lnk'
+    $legacyLnk  = Join-Path ([Environment]::GetFolderPath('Startup')) 'WtSidebar.lnk' # versoes antigas
+    $runKey     = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+
+    if ($Lang -ne 'pt' -and $Lang -ne 'en') { $Lang = if ((Get-UICulture).TwoLetterISOLanguageName -eq 'pt') { 'pt' } else { 'en' } }
+    # Mensagem no idioma escolhido. O arquivo fica so em ASCII (o irm | iex quebra com BOM), entao os
+    # acentos do portugues vem como \u00e3 e o texto passa por Unescape antes do -f.
+    function M([string]$pt, [string]$en) {
+        $text = if ($Lang -eq 'pt') { [regex]::Unescape($pt) } else { $en }
+        if ($args.Count) { $text -f $args } else { $text }
+    }
 
     function Stop-Sidebar {
         $procs = @(Get-Process WtSidebar -ErrorAction SilentlyContinue)
@@ -99,7 +113,7 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
             "$local\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
             "$local\Microsoft\Windows Terminal\settings.json"
         ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $path) { Write-Host 'Windows Terminal: settings.json nao encontrado, atalhos nao configurados.'; return }
+        if (-not $path) { Write-Host (M 'Windows Terminal: settings.json n\u00e3o encontrado, atalhos n\u00e3o configurados.' 'Windows Terminal: settings.json not found, shortcuts not configured.'); return }
 
         $wanted = @(
             @{ id = 'WtSidebar.openTabColorPicker'; keys = 'ctrl+alt+shift+c'; command = 'openTabColorPicker' },
@@ -113,7 +127,7 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
         )
 
         try { $json = Remove-Jsonc ([IO.File]::ReadAllText($path)) | ConvertFrom-Json }
-        catch { Write-Host "Windows Terminal: nao consegui ler $path, atalhos nao configurados."; return }
+        catch { Write-Host (M 'Windows Terminal: n\u00e3o consegui ler {0}, atalhos n\u00e3o configurados.' 'Windows Terminal: could not read {0}, shortcuts not configured.' $path); return }
         $actions = @(if ($json.actions) { $json.actions })
         $bindings = @(if ($json.keybindings) { $json.keybindings })
 
@@ -135,12 +149,14 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
                 foreach ($k in @($a.keys)) { if ($k) { $used[(Get-KeyId $k)] = Get-CommandId $a.command } }
             }
             $added = @()
+            $skipped = 0
             foreach ($w in $wanted) {
                 $keyId = Get-KeyId $w.keys
                 if ($used.ContainsKey($keyId)) {
                     # Mesma acao ja configurada pelo usuario: nada a fazer. Outra acao: nao sobrescreve.
                     if ($used[$keyId] -ne (Get-CommandId $w.command)) {
-                        Write-Host "Windows Terminal: $($w.keys) ja esta em uso ($($used[$keyId])); pulei $(Get-CommandId $w.command)."
+                        Write-Host (M 'Windows Terminal: {0} j\u00e1 est\u00e1 em uso ({1}); {2} n\u00e3o configurado.' 'Windows Terminal: {0} is already in use ({1}); {2} not configured.' $w.keys $used[$keyId] (Get-CommandId $w.command))
+                        $skipped++
                     }
                     continue
                 }
@@ -150,7 +166,10 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
                 $bindings += [pscustomobject]@{ id = $w.id; keys = $w.keys }
                 $added += $w.keys
             }
-            if ($added.Count -eq 0) { return }
+            if ($added.Count -eq 0) {
+                if ($skipped -eq 0) { Write-Host (M 'Windows Terminal: os atalhos j\u00e1 est\u00e3o configurados.' 'Windows Terminal: the shortcuts are already configured.') }
+                return
+            }
         }
 
         foreach ($name in 'actions', 'keybindings') {
@@ -160,15 +179,15 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
         }
         Copy-Item $path "$path.wtsidebar.bak" -Force
         [IO.File]::WriteAllText($path, ($json | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding($false)))
-        if ($remove) { Write-Host 'Windows Terminal: atalhos do WT Sidebar removidos.' }
-        else { Write-Host "Windows Terminal: atalhos adicionados ($($added -join ', ')). Backup: $path.wtsidebar.bak" }
+        if ($remove) { Write-Host (M 'Windows Terminal: atalhos do WT Sidebar removidos.' 'Windows Terminal: WT Sidebar shortcuts removed.') }
+        else { Write-Host (M 'Windows Terminal: atalhos adicionados ({0}). Backup: {1}' 'Windows Terminal: shortcuts added ({0}). Backup: {1}' ($added -join ', ') "$path.wtsidebar.bak") }
     }
 
     function New-Shortcut([string]$path, [string]$target) {
         $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
         $lnk.TargetPath = $target
         $lnk.WorkingDirectory = Split-Path $target
-        $lnk.Description = 'Abas verticais para o Windows Terminal'
+        $lnk.Description = M 'Abas verticais para o Windows Terminal' 'Vertical tabs for Windows Terminal'
         $lnk.Save()
     }
 
@@ -192,13 +211,21 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
         }
     }
 
+    if ($KeysOnly) {
+        # Chamado pelo app, que mostra esta saida numa caixa de mensagem.
+        [Console]::OutputEncoding = [Text.Encoding]::UTF8
+        Set-TerminalKeys $false
+        return
+    }
+
     if ($Uninstall) {
         Stop-Sidebar
         Set-TerminalKeys $true
-        foreach ($p in $startLnk, $bootLnk, $installDir) {
+        Remove-ItemProperty $runKey -Name WtSidebar -ErrorAction SilentlyContinue
+        foreach ($p in $startLnk, $legacyLnk, $installDir) {
             if (Test-Path $p) { Remove-Item $p -Recurse -Force }
         }
-        Write-Host 'WT Sidebar removido.'
+        Write-Host (M 'WT Sidebar removido.' 'WT Sidebar removed.')
         return
     }
 
@@ -215,13 +242,13 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
             $src = $ScriptDir
             $version = git -C $src describe --tags --always 2>$null
             if (-not $version) { $version = 'dev' }
-            Write-Host "Instalando do clone $src ($version)"
+            Write-Host (M 'Instalando do clone {0} ({1})' 'Installing from clone {0} ({1})' $src $version)
         } else {
             if (-not $Ref) {
                 try { $Ref = (Invoke-GitHub 'releases/latest').tag_name } catch { }
-                if (-not $Ref) { throw "Nenhuma release encontrada em github.com/$repo (sem release publicada ou sem acesso)." }
+                if (-not $Ref) { throw (M 'Nenhuma release encontrada em github.com/{0} (sem release publicada ou sem acesso).' 'No release found at github.com/{0} (none published or no access).' $repo) }
             }
-            Write-Host "Baixando $repo@$Ref"
+            Write-Host (M 'Baixando {0}@{1}' 'Downloading {0}@{1}' $repo $Ref)
             $zip = Join-Path $work 'src.zip'
             Invoke-GitHub "zipball/$Ref" $zip
             Expand-Archive $zip (Join-Path $work 'src')
@@ -241,18 +268,25 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
         Set-Content (Join-Path $installDir 'version.txt') $version -Encoding ASCII
 
         New-Shortcut $startLnk $exe
-        if ($NoStartup) { if (Test-Path $bootLnk) { Remove-Item $bootLnk -Force } }
-        else { New-Shortcut $bootLnk $exe }
+        # Iniciar com o Windows: no update fica como o usuario deixou nas configuracoes do app.
+        if (Test-Path $legacyLnk) {
+            Remove-Item $legacyLnk -Force
+            if ($Update) { Set-ItemProperty $runKey -Name WtSidebar -Value "`"$exe`"" }
+        }
+        if (-not $Update) {
+            if ($NoStartup) { Remove-ItemProperty $runKey -Name WtSidebar -ErrorAction SilentlyContinue }
+            else { Set-ItemProperty $runKey -Name WtSidebar -Value "`"$exe`"" }
+        }
 
-        if (-not $NoKeys) { Set-TerminalKeys $false }
-        Write-Host "WT Sidebar $version instalado em $installDir"
+        if (-not $NoKeys -and -not $Update) { Set-TerminalKeys $false }
+        Write-Host (M 'WT Sidebar {0} instalado em {1}' 'WT Sidebar {0} installed to {1}' $version $installDir)
         if (-not $NoLaunch) { Start-Process $exe }
     }
     catch {
         if (-not $Update) { throw }
-        Write-Host "ERRO: $_"
+        Write-Host "ERROR: $_"
         Add-Type -AssemblyName System.Windows.Forms
-        [System.Windows.Forms.MessageBox]::Show("A atualiza$([char]0xE7)$([char]0xE3)o falhou:`n`n$_`n`nLog: $dataDir\update.log",
+        [System.Windows.Forms.MessageBox]::Show((M 'A atualiza\u00e7\u00e3o falhou:\n\n{0}\n\nLog: {1}' "The update failed:`n`n{0}`n`nLog: {1}" $_ "$dataDir\update.log"),
             'WT Sidebar', 'OK', 'Error') | Out-Null
         # Garante que o app volta mesmo com erro.
         if ((Test-Path $exe) -and -not (Get-Process WtSidebar -ErrorAction SilentlyContinue)) { Start-Process $exe }
@@ -263,4 +297,4 @@ function Install-WtSidebar([string]$Ref, [bool]$NoStartup, [bool]$NoKeys, [bool]
     }
 }
 
-Install-WtSidebar $Ref $NoStartup $NoKeys $NoLaunch $Uninstall $Update $PSScriptRoot
+Install-WtSidebar @PSBoundParameters -ScriptDir $PSScriptRoot

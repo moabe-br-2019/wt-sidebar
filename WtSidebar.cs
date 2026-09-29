@@ -51,7 +51,6 @@ namespace WtSidebar
 
     class SidebarForm : Form
     {
-        const int ExpandedWidth = 220;
         const int CollapsedWidth = 44;
         const int HeaderHeight = 32;
         const int ItemHeight = 34;
@@ -108,7 +107,8 @@ namespace WtSidebar
         readonly ContextMenuStrip appMenu = new ContextMenuStrip();
         readonly List<ToolStripItem> tabMenuItems = new List<ToolStripItem>(); // so aparecem com clique numa aba
         TabInfo menuTarget;
-        readonly ToolStripMenuItem updateItem = new ToolStripMenuItem("Buscar atualizações");
+        readonly ToolStripMenuItem updateItem = new ToolStripMenuItem();
+        AppSettings settings = AppSettings.Load();
         ReleaseInfo newRelease; // release mais nova que a instalada, se houver
         int checkingUpdates;
         readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
@@ -129,16 +129,33 @@ namespace WtSidebar
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
             UpdateFonts();
 
+            L.Apply(settings.Language);
+            collapsed = settings.StartCollapsed;
+            BuildMenus();
+            updateItem.Click += delegate { CheckUpdatesAsync(true); };
+            findTimer.Interval = 1000;
+            findTimer.Tick += delegate { EnsureAttached(); };
+        }
+
+        static string T(string pt, string en) { return L.T(pt, en); }
+
+        // Menus com os textos no idioma atual; chamado de novo quando o idioma muda nas configuracoes.
+        void BuildMenus()
+        {
+            menu.Items.Clear();
+            appMenu.Items.Clear();
+            tabMenuItems.Clear();
+
             // Mesmos itens do menu de botao direito da guia no terminal. Cada um seleciona a aba e manda o
-            // atalho da acao. Os Ctrl+Alt+Shift foram criados no settings.json do terminal, porque essas
-            // acoes nao tem atalho padrao; Alt+Shift+D (dividir) ja era do usuario.
-            var move = new ToolStripMenuItem("Mover aba");
-            move.DropDownItems.Add(TabAction("Para nova janela", "^%+n", "Ctrl+Alt+Shift+N"));
-            move.DropDownItems.Add(TabAction("Para a esquerda", "^%+{LEFT}", "Ctrl+Alt+Shift+←"));
-            move.DropDownItems.Add(TabAction("Para a direita", "^%+{RIGHT}", "Ctrl+Alt+Shift+→"));
-            var close = new ToolStripMenuItem("Fechar");
-            close.DropDownItems.Add(TabAction("Fechar outras abas", "^%+o", "Ctrl+Alt+Shift+O"));
-            close.DropDownItems.Add(TabAction("Fechar abas à direita", "^%+w", "Ctrl+Alt+Shift+W"));
+            // atalho da acao. Os Ctrl+Alt+Shift nao existem por padrao no terminal: o install.ps1 os cria
+            // no settings.json dele.
+            var move = new ToolStripMenuItem(T("Mover aba", "Move tab")) { ForeColor = Fg };
+            move.DropDownItems.Add(TabAction(T("Para nova janela", "To new window"), "^%+n", "Ctrl+Alt+Shift+N"));
+            move.DropDownItems.Add(TabAction(T("Para a esquerda", "Left"), "^%+{LEFT}", "Ctrl+Alt+Shift+←"));
+            move.DropDownItems.Add(TabAction(T("Para a direita", "Right"), "^%+{RIGHT}", "Ctrl+Alt+Shift+→"));
+            var close = new ToolStripMenuItem(T("Fechar", "Close")) { ForeColor = Fg };
+            close.DropDownItems.Add(TabAction(T("Fechar outras abas", "Close other tabs"), "^%+o", "Ctrl+Alt+Shift+O"));
+            close.DropDownItems.Add(TabAction(T("Fechar abas à direita", "Close tabs to the right"), "^%+w", "Ctrl+Alt+Shift+W"));
             foreach (var sub in new[] { move, close })
             {
                 var dd = (ToolStripDropDownMenu)sub.DropDown;
@@ -146,41 +163,54 @@ namespace WtSidebar
                 dd.ShowImageMargin = false;
             }
 
-            tabMenuItems.Add(TabAction("Alterar cor da aba", "^%+c", "Ctrl+Alt+Shift+C"));
-            tabMenuItems.Add(TabAction("Renomear aba", "^%+r", "Ctrl+Alt+Shift+R"));
-            tabMenuItems.Add(TabAction("Duplicar aba", "^+d", "Ctrl+Shift+D"));
-            tabMenuItems.Add(TabAction("Dividir aba", "%+d", "Alt+Shift+D"));
+            tabMenuItems.Add(TabAction(T("Alterar cor da aba", "Change tab color"), "^%+c", "Ctrl+Alt+Shift+C"));
+            tabMenuItems.Add(TabAction(T("Renomear aba", "Rename tab"), "^%+r", "Ctrl+Alt+Shift+R"));
+            tabMenuItems.Add(TabAction(T("Duplicar aba", "Duplicate tab"), "^+d", "Ctrl+Shift+D"));
+            tabMenuItems.Add(TabAction(T("Dividir aba", "Split tab"), "%+d", "Alt+Shift+D"));
             tabMenuItems.Add(move);
-            tabMenuItems.Add(TabAction("Exportar texto", "^%+e", "Ctrl+Alt+Shift+E"));
-            tabMenuItems.Add(TabAction("Localizar", "^+f", "Ctrl+Shift+F"));
+            tabMenuItems.Add(TabAction(T("Exportar texto", "Export text"), "^%+e", "Ctrl+Alt+Shift+E"));
+            tabMenuItems.Add(TabAction(T("Localizar", "Find"), "^+f", "Ctrl+Shift+F"));
             tabMenuItems.Add(new ToolStripSeparator());
             tabMenuItems.Add(close);
-            tabMenuItems.Add(new ToolStripMenuItem("Fechar aba", null, delegate { CloseTab(menuTarget); }));
+            tabMenuItems.Add(new ToolStripMenuItem(T("Fechar aba", "Close tab"), null, delegate { CloseTab(menuTarget); }));
             tabMenuItems.Add(new ToolStripSeparator());
             foreach (var item in tabMenuItems) menu.Items.Add(item);
-            menu.Items.Add("Recolher / expandir  (Ctrl+Shift+B)", null, delegate { ToggleCollapse(); });
-            menu.Items.Add("Nova aba", null, delegate { NewTab(); });
+            menu.Items.Add(T("Recolher / expandir  (Ctrl+Shift+B)", "Collapse / expand  (Ctrl+Shift+B)"), null, delegate { ToggleCollapse(); });
+            menu.Items.Add(T("Nova aba", "New tab"), null, delegate { NewTab(); });
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Sair", null, delegate { Close(); });
-            appMenu.Items.Add(new ToolStripMenuItem("Versão " + (InstalledVersion() ?? "de desenvolvimento")) { Enabled = false });
+            menu.Items.Add(T("Sair", "Exit"), null, delegate { Close(); });
+
+            appMenu.Items.Add(new ToolStripMenuItem(T("Versão ", "Version ") + (InstalledVersion() ?? T("de desenvolvimento", "development")))
+                { Enabled = false });
             appMenu.Items.Add(updateItem);
+            appMenu.Items.Add(new ToolStripMenuItem(T("Configurações…", "Settings…"), null, delegate { ShowSettings(); }) { ForeColor = Fg });
             appMenu.Items.Add(new ToolStripSeparator());
-            appMenu.Items.Add(new ToolStripMenuItem("Fechar WT Sidebar", null, delegate { Close(); }));
-            appMenu.ShowImageMargin = false;
+            appMenu.Items.Add(new ToolStripMenuItem(T("Fechar WT Sidebar", "Close WT Sidebar"), null, delegate { Close(); }) { ForeColor = Fg });
+            RefreshUpdateItem();
+
             foreach (var m in new[] { menu, profileMenu, appMenu })
             {
                 m.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
                 m.ForeColor = Fg;
-                m.ShowImageMargin = true;
+                m.ShowImageMargin = m != appMenu;
             }
-
-            updateItem.ForeColor = Fg;
-            updateItem.Click += delegate { CheckUpdatesAsync(true); };
-
-            findTimer.Interval = 1000;
-            findTimer.Tick += delegate { EnsureAttached(); };
         }
 
+        void ShowSettings()
+        {
+            using (var dlg = new SettingsForm(settings, scale))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                bool collapseChanged = dlg.Result.StartCollapsed != settings.StartCollapsed;
+                settings = dlg.Result;
+                settings.Save();
+                L.Apply(settings.Language);
+                BuildMenus();
+                if (collapseChanged) collapsed = settings.StartCollapsed;
+                HandleLocation();
+                Invalidate();
+            }
+        }
         protected override bool ShowWithoutActivation { get { return true; } }
 
         protected override CreateParams CreateParams
@@ -193,7 +223,7 @@ namespace WtSidebar
             }
         }
 
-        int SidebarWidth { get { return S(collapsed ? CollapsedWidth : ExpandedWidth); } }
+        int SidebarWidth { get { return S(collapsed ? CollapsedWidth : settings.Width); } }
         int S(int v) { return (int)Math.Round(v * scale); }
 
         void UpdateFonts()
@@ -210,9 +240,9 @@ namespace WtSidebar
             EnsureAttached();
             findTimer.Start();
             scanTimer = new System.Threading.Timer(delegate { Scan(); }, null, 0, 500);
-            CheckUpdatesAsync(false);
+            if (settings.AutoUpdate) CheckUpdatesAsync(false);
             updateTimer.Interval = (int)UpdateInterval.TotalMilliseconds;
-            updateTimer.Tick += delegate { CheckUpdatesAsync(false); };
+            updateTimer.Tick += delegate { if (settings.AutoUpdate) CheckUpdatesAsync(false); };
             updateTimer.Start();
         }
 
@@ -634,7 +664,7 @@ namespace WtSidebar
             iconCache[key] = new TabInfo { Icon = bmp, IconHash = hash };
         }
 
-        static void Log(Exception ex)
+        public static void Log(Exception ex)
         {
             try
             {
@@ -829,15 +859,15 @@ namespace WtSidebar
             return !string.Equals(latest, installed, StringComparison.OrdinalIgnoreCase);
         }
 
-        // Ao abrir e a cada 6 h so marca o menu; pelo menu (interactive) mostra o resultado e oferece atualizar.
+        // Ao abrir e a cada 6 h (se ligado nas configuracoes) so marca o menu; pelo menu (interactive) mostra o resultado e oferece atualizar.
         void CheckUpdatesAsync(bool interactive)
         {
             string installed = InstalledVersion();
             if (installed == null)
             {
                 if (interactive)
-                    MessageBox.Show(this, "Esta é uma versão de desenvolvimento (build.ps1), sem atualização automática.\n\n" +
-                        "Para instalar a versão publicada, rode o install.ps1.",
+                    MessageBox.Show(this, T("Esta é uma versão de desenvolvimento (build.ps1), sem atualização automática.\n\nPara instalar a versão publicada, rode o install.ps1.",
+                        "This is a development build (build.ps1), without automatic updates.\n\nRun install.ps1 to install the published version."),
                         "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -852,25 +882,30 @@ namespace WtSidebar
             });
         }
 
+        void RefreshUpdateItem()
+        {
+            updateItem.Text = newRelease != null ? T("Atualizar para ", "Update to ") + newRelease.Tag : T("Buscar atualizações", "Check for updates");
+            updateItem.ForeColor = newRelease != null ? Accent : Fg;
+        }
+
         void OnUpdatesChecked(string installed, ReleaseInfo release, bool interactive)
         {
             if (release != null) newRelease = IsNewer(release.Tag, installed) ? release : null;
-            updateItem.Text = newRelease != null ? "Atualizar para " + newRelease.Tag : "Buscar atualizações";
-            updateItem.ForeColor = newRelease != null ? Accent : Fg;
+            RefreshUpdateItem();
             if (!interactive) return;
 
             if (release == null)
-                MessageBox.Show(this, "Não foi possível consultar as versões no GitHub.",
+                MessageBox.Show(this, T("Não foi possível consultar as versões no GitHub.", "Could not check the versions on GitHub."),
                     "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             else if (newRelease == null)
-                MessageBox.Show(this, "O WT Sidebar já está na versão mais recente (" + installed + ").",
+                MessageBox.Show(this, T("O WT Sidebar já está na versão mais recente (", "WT Sidebar is up to date (") + installed + ").",
                     "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Information);
             else
             {
                 string notes = newRelease.Notes.Trim();
                 if (notes.Length > 800) notes = notes.Substring(0, 800) + "…";
-                if (MessageBox.Show(this, "Versão " + newRelease.Tag + " disponível (instalada: " + installed + ").\n\n" +
-                        (notes.Length > 0 ? notes + "\n\n" : "") + "Atualizar agora? O WT Sidebar fecha e abre de novo.",
+                if (MessageBox.Show(this, string.Format(T("Versão {0} disponível (instalada: {1}).", "Version {0} is available (installed: {1})."), newRelease.Tag, installed) + "\n\n" +
+                        (notes.Length > 0 ? notes + "\n\n" : "") + T("Atualizar agora? O WT Sidebar fecha e abre de novo.", "Update now? WT Sidebar will close and start again."),
                         "WT Sidebar", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                     RunUpdate(newRelease.Tag);
             }
@@ -882,14 +917,14 @@ namespace WtSidebar
             string script = Path.Combine(InstallDir, "install.ps1");
             if (!File.Exists(script))
             {
-                MessageBox.Show(this, "Não achei " + script + ". Reinstale com o install.ps1.",
+                MessageBox.Show(this, string.Format(T("Não achei {0}. Reinstale com o install.ps1.", "{0} was not found. Reinstall with install.ps1."), script),
                     "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             try
             {
                 Process.Start(new ProcessStartInfo("powershell.exe",
-                    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -Update -Ref " + tag)
+                    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -Update -Ref " + tag + " -Lang " + (L.English ? "en" : "pt"))
                     { UseShellExecute = false, CreateNoWindow = true });
                 Close();
             }
@@ -1050,7 +1085,7 @@ namespace WtSidebar
                     { ForeColor = Fg, ToolTipText = folder });
             }
             if (menuItem.DropDownItems.Count > 0) menuItem.DropDownItems.Add(new ToolStripSeparator());
-            menuItem.DropDownItems.Add(new ToolStripMenuItem("Escolher pasta…", null, delegate
+            menuItem.DropDownItems.Add(new ToolStripMenuItem(T("Escolher pasta…", "Choose folder…"), null, delegate
             {
                 string dir = PickFolder();
                 if (dir != null) LaunchAgent(command, dir);
@@ -1062,7 +1097,7 @@ namespace WtSidebar
         {
             using (var dlg = new FolderBrowserDialog())
             {
-                dlg.Description = "Pasta do projeto";
+                dlg.Description = T("Pasta do projeto", "Project folder");
                 dlg.ShowNewFolderButton = true;
                 var recent = LoadRecentFolders();
                 if (recent.Count > 0) dlg.SelectedPath = recent[0];
@@ -1117,17 +1152,17 @@ namespace WtSidebar
             }
             catch (Exception)
             {
-                profileMenu.Items.Add(new ToolStripMenuItem("Nova aba", null, delegate { NewTab(); }) { ForeColor = Fg });
+                profileMenu.Items.Add(new ToolStripMenuItem(T("Nova aba", "New tab"), null, delegate { NewTab(); }) { ForeColor = Fg });
             }
 
-            profileMenu.Items.Add(new ToolStripSeparator());
-            profileMenu.Items.Add(AgentMenu("Claude Code em", "claude"));
-            profileMenu.Items.Add(AgentMenu("Codex em", "codex"));
+            if (settings.Agents.Count > 0) profileMenu.Items.Add(new ToolStripSeparator());
+            foreach (var agent in settings.Agents)
+                profileMenu.Items.Add(AgentMenu(string.Format(T("{0} em", "{0} in"), agent.Name), agent.Command));
 
             profileMenu.Items.Add(new ToolStripSeparator());
-            profileMenu.Items.Add(new ToolStripMenuItem("Configurações", null, delegate { SendToTerminal("^,"); })
+            profileMenu.Items.Add(new ToolStripMenuItem(T("Configurações do terminal", "Terminal settings"), null, delegate { SendToTerminal("^,"); })
                 { ForeColor = Fg, ShortcutKeyDisplayString = "Ctrl+," });
-            profileMenu.Items.Add(new ToolStripMenuItem("Paleta de comandos", null, delegate { SendToTerminal("^+p"); })
+            profileMenu.Items.Add(new ToolStripMenuItem(T("Paleta de comandos", "Command palette"), null, delegate { SendToTerminal("^+p"); })
                 { ForeColor = Fg, ShortcutKeyDisplayString = "Ctrl+Shift+P" });
             profileMenu.Show(this, at);
         }
@@ -1267,7 +1302,7 @@ namespace WtSidebar
                     using (var b = new SolidBrush(HoverBg))
                         g.FillRectangle(b, hover == HitHeaderMenu ? menuZone : toggleZone);
 
-                // "WT Sidebar ⌄": abre o menu com Fechar
+                // "WT Sidebar ⌄": abre o menu do app (versao, atualizacoes, configuracoes, fechar)
                 string label = "WT Sidebar";
                 int textW = TextRenderer.MeasureText(g, label, itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
                 TextRenderer.DrawText(g, label, itemFont, new Rectangle(pad, 0, textW + S(4), ListTop), FgDim, flags | TextFormatFlags.NoPadding);
@@ -1310,7 +1345,7 @@ namespace WtSidebar
 
                 if (isNew)
                 {
-                    string label = collapsed ? "+" : "+  Nova aba";
+                    string label = collapsed ? "+" : "+  " + T("Nova aba", "New tab");
                     var tf = collapsed ? flags | TextFormatFlags.HorizontalCenter : flags;
                     var rect = collapsed ? row : new Rectangle(pad, y, w - pad * 2, ih);
                     TextRenderer.DrawText(g, label, itemFont, rect, FgDim, tf);
@@ -1390,12 +1425,12 @@ namespace WtSidebar
             hover = h;
             hoverClose = hc;
             string tip = null;
-            if (hc) tip = "Fechar aba";
+            if (hc) tip = T("Fechar aba", "Close tab");
             else if (h >= 0 && h < tabs.Count) tip = tabs[h].Title;
-            else if (h == HitNewTab) tip = collapsed ? "Nova aba (botão direito: perfis)" : "Nova aba";
-            else if (h == HitProfileMenu) tip = "Abrir perfil";
-            else if (h == HitHeaderMenu) tip = "Menu do WT Sidebar";
-            else if (h == HitToggle) tip = collapsed ? "Expandir (Ctrl+Shift+B)" : "Recolher (Ctrl+Shift+B)";
+            else if (h == HitNewTab) tip = collapsed ? T("Nova aba (botão direito: perfis)", "New tab (right click: profiles)") : T("Nova aba", "New tab");
+            else if (h == HitProfileMenu) tip = T("Abrir perfil", "Open profile");
+            else if (h == HitHeaderMenu) tip = T("Menu do WT Sidebar", "WT Sidebar menu");
+            else if (h == HitToggle) tip = collapsed ? T("Expandir (Ctrl+Shift+B)", "Expand (Ctrl+Shift+B)") : T("Recolher (Ctrl+Shift+B)", "Collapse (Ctrl+Shift+B)");
             toolTip.SetToolTip(this, tip);
             Invalidate();
         }
@@ -1524,6 +1559,7 @@ namespace WtSidebar
         [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
         [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
+        [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
         [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
         [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr hdc, int x, int y);

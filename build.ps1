@@ -7,6 +7,6 @@ $wpf = Join-Path $fw 'WPF'
     /out:"$Out" `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll `
     /r:"$wpf\UIAutomationClient.dll" /r:"$wpf\UIAutomationTypes.dll" /r:"$wpf\WindowsBase.dll" `
-    "$PSScriptRoot\WtSidebar.cs"
+    "$PSScriptRoot\*.cs"
 if ($LASTEXITCODE -ne 0) { throw "csc falhou ($LASTEXITCODE)" }
 Write-Host "OK: $Out"
