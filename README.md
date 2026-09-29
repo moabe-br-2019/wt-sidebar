@@ -40,7 +40,7 @@ No SDK needed; it compiles with the C# compiler that ships with Windows (.NET Fr
 .\WtSidebar.exe
 ```
 
-To start with Windows, put a shortcut to `WtSidebar.exe` in `shell:startup`. Right click the sidebar header and choose **Sair** to quit.
+To start with Windows, put a shortcut to `WtSidebar.exe` in `shell:startup`. Click **WT Sidebar ⌄** in the header and choose **Fechar WT Sidebar** to quit.
 
 ## Limitations
 

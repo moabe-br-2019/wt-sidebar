@@ -60,6 +60,7 @@ namespace WtSidebar
         const int HitToggle = -2;
         const int HitNewTab = -3;
         const int HitProfileMenu = -4;
+        const int HitHeaderMenu = -5;
 
         static readonly Color Bg = Color.FromArgb(0x1f, 0x1f, 0x1f);
         static readonly Color HeaderBg = Color.FromArgb(0x18, 0x18, 0x18);
@@ -103,6 +104,7 @@ namespace WtSidebar
         readonly ToolTip toolTip = new ToolTip();
         readonly ContextMenuStrip menu = new ContextMenuStrip();
         readonly ContextMenuStrip profileMenu = new ContextMenuStrip();
+        readonly ContextMenuStrip appMenu = new ContextMenuStrip();
         readonly List<ToolStripItem> tabMenuItems = new List<ToolStripItem>(); // so aparecem com clique numa aba
         TabInfo menuTarget;
 
@@ -155,7 +157,9 @@ namespace WtSidebar
             menu.Items.Add("Nova aba", null, delegate { NewTab(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Sair", null, delegate { Close(); });
-            foreach (var m in new[] { menu, profileMenu })
+            appMenu.Items.Add(new ToolStripMenuItem("Fechar WT Sidebar", null, delegate { Close(); }));
+            appMenu.ShowImageMargin = false;
+            foreach (var m in new[] { menu, profileMenu, appMenu })
             {
                 m.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
                 m.ForeColor = Fg;
@@ -959,9 +963,21 @@ namespace WtSidebar
             scroll = Math.Max(0, Math.Min(scroll, max));
         }
 
+        // Area do "WT Sidebar ⌄" no cabecalho.
+        Rectangle HeaderMenuRect()
+        {
+            int pad = S(12);
+            int textW = TextRenderer.MeasureText("WT Sidebar", itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
+            return new Rectangle(pad - S(6), S(4), textW + S(22), ListTop - S(8));
+        }
+
         int HitTest(Point p)
         {
-            if (p.Y < ListTop) return HitToggle;
+            if (p.Y < ListTop)
+            {
+                if (collapsed || p.X >= ClientSize.Width - S(36)) return HitToggle;
+                return HeaderMenuRect().Contains(p) ? HitHeaderMenu : HitNone;
+            }
             int row = (p.Y - ListTop + scroll) / S(ItemHeight);
             if (row < tabs.Count) return row;
             if (row == tabs.Count)
@@ -1053,16 +1069,36 @@ namespace WtSidebar
             var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis;
 
             // cabecalho
-            using (var b = new SolidBrush(hover == HitToggle ? HoverBg : HeaderBg))
+            using (var b = new SolidBrush(HeaderBg))
                 g.FillRectangle(b, 0, 0, w, ListTop);
             var headerRect = new Rectangle(0, 0, w, ListTop);
             if (collapsed)
             {
+                if (hover == HitToggle)
+                    using (var b = new SolidBrush(HoverBg))
+                        g.FillRectangle(b, headerRect);
                 TextRenderer.DrawText(g, "»", glyphFont, headerRect, FgDim, flags | TextFormatFlags.HorizontalCenter);
             }
             else
             {
-                TextRenderer.DrawText(g, "Abas", itemFont, new Rectangle(pad, 0, w - pad * 3, ListTop), FgDim, flags);
+                var menuZone = HeaderMenuRect();
+                var toggleZone = new Rectangle(w - S(36), 0, S(36), ListTop);
+                if (hover == HitHeaderMenu || hover == HitToggle)
+                    using (var b = new SolidBrush(HoverBg))
+                        g.FillRectangle(b, hover == HitHeaderMenu ? menuZone : toggleZone);
+
+                // "WT Sidebar ⌄": abre o menu com Fechar
+                string label = "WT Sidebar";
+                int textW = TextRenderer.MeasureText(g, label, itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
+                TextRenderer.DrawText(g, label, itemFont, new Rectangle(pad, 0, textW + S(4), ListTop), FgDim, flags | TextFormatFlags.NoPadding);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var pen = new Pen(FgDim, Math.Max(1f, 1.3f * scale)))
+                {
+                    float cx = pad + textW + S(10), cy = ListTop / 2f, k = S(3);
+                    g.DrawLines(pen, new[] { new PointF(cx - k, cy - k / 2), new PointF(cx, cy + k / 2), new PointF(cx + k, cy - k / 2) });
+                }
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
+
                 TextRenderer.DrawText(g, "«", glyphFont, new Rectangle(w - S(36), 0, S(28), ListTop), FgDim, flags | TextFormatFlags.HorizontalCenter);
             }
 
@@ -1178,6 +1214,7 @@ namespace WtSidebar
             else if (h >= 0 && h < tabs.Count) tip = tabs[h].Title;
             else if (h == HitNewTab) tip = collapsed ? "Nova aba (botão direito: perfis)" : "Nova aba";
             else if (h == HitProfileMenu) tip = "Abrir perfil";
+            else if (h == HitHeaderMenu) tip = "Menu do WT Sidebar";
             else if (h == HitToggle) tip = collapsed ? "Expandir (Ctrl+Shift+B)" : "Recolher (Ctrl+Shift+B)";
             toolTip.SetToolTip(this, tip);
             Invalidate();
@@ -1215,6 +1252,11 @@ namespace WtSidebar
             if (e.Button != MouseButtons.Left) return;
             if (InCloseZone(e.Location, h)) CloseTab(tabs[h]);
             else if (h == HitToggle) ToggleCollapse();
+            else if (h == HitHeaderMenu)
+            {
+                var r = HeaderMenuRect();
+                appMenu.Show(this, new Point(r.Left, r.Bottom + S(4)));
+            }
             else if (h == HitNewTab) NewTab();
             else if (h == HitProfileMenu) ShowProfileMenu(new Point(ClientSize.Width - S(32), ListTop + tabs.Count * S(ItemHeight) - scroll + S(ItemHeight)));
             else if (h >= 0) SelectTab(h);
