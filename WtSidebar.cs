@@ -913,7 +913,13 @@ namespace WtSidebar
         }
 
         // settings.json aceita comentarios e virgulas sobrando; o JavaScriptSerializer nao.
+        // Duas passadas: a virgula pode estar separada do } ou ] so por um comentario.
         static string StripJsonc(string s)
+        {
+            return StripJsonc(StripJsonc(s, true), false);
+        }
+
+        static string StripJsonc(string s, bool comments)
         {
             var sb = new StringBuilder(s.Length);
             bool inString = false;
@@ -927,18 +933,18 @@ namespace WtSidebar
                     else if (c == '"') inString = false;
                 }
                 else if (c == '"') { inString = true; sb.Append(c); }
-                else if (c == '/' && i + 1 < s.Length && s[i + 1] == '/')
+                else if (comments && c == '/' && i + 1 < s.Length && s[i + 1] == '/')
                 {
                     while (i < s.Length && s[i] != '\n') i++;
                     sb.Append('\n');
                 }
-                else if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
+                else if (comments && c == '/' && i + 1 < s.Length && s[i + 1] == '*')
                 {
                     i += 2;
                     while (i + 1 < s.Length && !(s[i] == '*' && s[i + 1] == '/')) i++;
                     i++;
                 }
-                else if (c == ',')
+                else if (!comments && c == ',')
                 {
                     int j = i + 1;
                     while (j < s.Length && char.IsWhiteSpace(s[j])) j++;

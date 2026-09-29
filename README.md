@@ -18,7 +18,7 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 - Switching and closing use the tab's `SelectionItemPattern` and its `CloseButton`.
 - Tab color and profile icon are sampled from the screen while the terminal is in the foreground, because UI Automation does not expose them.
 - The sidebar is an owned, non-activating tool window positioned with `SetWinEventHook` location events.
-- Tab menu actions select the tab and send the action's keyboard shortcut. Actions without a default shortcut need these bindings in the terminal's `settings.json`:
+- Tab menu actions select the tab and send the action's keyboard shortcut. Actions without a default shortcut need these bindings in the terminal's `settings.json`. The installer adds the missing ones as `WtSidebar.*` actions (with a backup at `settings.json.wtsidebar.bak`), skips keys already used by other actions, and `-Uninstall` removes them:
 
 | Action | Keys |
 |---|---|
@@ -29,7 +29,6 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 | `moveTab` (`direction: backward` / `forward`) | `ctrl+alt+shift+left` / `right` |
 | `closeOtherTabs` | `ctrl+alt+shift+o` |
 | `closeTabsAfter` | `ctrl+alt+shift+w` |
-| `splitPane` (`splitMode: duplicate`) | `alt+shift+d` |
 
 ## Install
 
@@ -48,6 +47,7 @@ With options, run it as a script block:
 ```
 
 - `-NoStartup` skips the startup shortcut.
+- `-NoKeys` leaves the terminal's `settings.json` untouched (see the shortcut table in How it works).
 - `-Ref v1.2.0` installs that tag (or branch) instead of the latest release.
 - `-Uninstall` removes the app and its shortcuts.
 
@@ -78,3 +78,7 @@ gh release create v1.2.0 --generate-notes
 - Supports a single Windows Terminal window.
 - Tab colors and icons are only read while the terminal is in front and the tab is visible in the top tab strip.
 - While a terminal flyout menu is open, UI Automation hides the tabs; the sidebar keeps the last known list.
+
+## License
+
+[MIT](LICENSE)
