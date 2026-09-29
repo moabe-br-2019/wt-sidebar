@@ -22,7 +22,7 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 - Start with Windows (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
 - Check for updates automatically. When off, the app only goes online when you click **Check for updates**.
 - Agent commands: name and command of each entry in the `⌄` menu (for example `Gemini` / `gemini`). The command runs in PowerShell, in a new tab, in the chosen folder.
-- **Set up terminal shortcuts**: adds the terminal shortcuts the tab menu needs again (see below).
+- **Set up Windows Terminal**: applies the terminal settings below again (for example after resetting the terminal).
 
 They are saved in `%LOCALAPPDATA%\WtSidebar\settings.json`.
 
@@ -32,7 +32,8 @@ They are saved in `%LOCALAPPDATA%\WtSidebar\settings.json`.
 - Switching and closing use the tab's `SelectionItemPattern` and its `CloseButton`.
 - Tab color and profile icon are sampled from the screen while the terminal is in the foreground, because UI Automation does not expose them.
 - The sidebar is an owned, non-activating tool window positioned with `SetWinEventHook` location events.
-- Tab menu actions select the tab and send the action's keyboard shortcut. Actions without a default shortcut need these bindings in the terminal's `settings.json`. The installer adds the missing ones as `WtSidebar.*` actions (with a backup at `settings.json.wtsidebar.bak`), skips keys already used by other actions, and `-Uninstall` removes them:
+- The sidebar follows a single terminal window, so the installer sets `"windowingBehavior": "useAnyExisting"` in the terminal's `settings.json` (unless it is already `useExisting` or `useAnyExisting`): opening the terminal from the Start menu, Explorer's "Open in Terminal" or `wt.exe` adds a tab to the existing window instead of opening a new one. `-Uninstall` restores the previous value.
+- Tab menu actions select the tab and send the action's keyboard shortcut. Actions without a default shortcut need these bindings in the terminal's `settings.json`. The installer adds the missing ones as `WtSidebar.*` actions, skips keys already used by other actions, and `-Uninstall` removes them. Before changing the file it saves a backup at `settings.json.wtsidebar.bak`.
 
 | Action | Keys |
 |---|---|
@@ -52,7 +53,7 @@ Paste in PowerShell:
 irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1 | iex
 ```
 
-No SDK and no git needed: the installer downloads the source of the latest release, compiles it with the C# compiler that ships with Windows (.NET Framework 4), copies it to `%LOCALAPPDATA%\Programs\WtSidebar`, adds a Start menu shortcut, sets it to start with Windows, adds the terminal shortcuts the tab menu needs and starts it. Messages follow the Windows language (`-Lang en` or `-Lang pt` to choose).
+No SDK and no git needed: the installer downloads the source of the latest release, compiles it with the C# compiler that ships with Windows (.NET Framework 4), copies it to `%LOCALAPPDATA%\Programs\WtSidebar`, adds a Start menu shortcut, sets it to start with Windows, configures Windows Terminal (see How it works) and starts it. Messages follow the Windows language (`-Lang en` or `-Lang pt` to choose).
 
 With options, run it as a script block:
 
@@ -61,9 +62,9 @@ With options, run it as a script block:
 ```
 
 - `-NoStartup` does not start it with Windows.
-- `-NoKeys` leaves the terminal's `settings.json` untouched (see the shortcut table in How it works).
+- `-NoKeys` leaves the terminal's `settings.json` untouched (see How it works).
 - `-Ref v1.2.0` installs that tag (or branch) instead of the latest release.
-- `-Uninstall` removes the app, its shortcuts and its terminal shortcuts (settings and recent folders stay in `%LOCALAPPDATA%\WtSidebar`).
+- `-Uninstall` removes the app, its shortcuts and its terminal changes (settings and recent folders stay in `%LOCALAPPDATA%\WtSidebar`).
 
 Click **WT Sidebar ⌄** in the header and choose **Close WT Sidebar** to quit.
 

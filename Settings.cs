@@ -191,7 +191,7 @@ namespace WtSidebar
             hint.ForeColor = FgDim;
             y += S(34);
 
-            var keys = AddButton(L.T("Configurar atalhos do terminal", "Set up terminal shortcuts"), x, y, S(250));
+            var keys = AddButton(L.T("Configurar o Windows Terminal", "Set up Windows Terminal"), x, y, S(250));
             keys.Click += delegate { SetupTerminalKeys(); };
 
             var cancel = AddButton(L.T("Cancelar", "Cancel"), ClientSize.Width - S(20) - S(90), ClientSize.Height - S(48), S(90));

@@ -9,12 +9,12 @@
 #
 #   -Ref v1.2.0   instala essa tag ou branch em vez da ultima release
 #   -NoStartup    nao inicia com o Windows
-#   -NoKeys       nao adiciona ao settings.json do terminal os atalhos que o menu de aba usa
+#   -NoKeys       nao mexe no settings.json do terminal (atalhos do menu de aba e abrir como aba)
 #   -NoLaunch     nao abre o app no fim
 #   -Uninstall    remove app e atalhos (mantem as pastas recentes)
 #   -Lang en      mensagens em ingles (ou pt); por padrao segue o idioma do Windows
 #   -Update       usado pelo menu "Atualizar" do app: roda escondido, grava log e avisa se falhar
-#   -KeysOnly     so configura os atalhos do terminal (botao nas configuracoes do app)
+#   -KeysOnly     so configura o terminal (botao nas configuracoes do app)
 #
 # Rodado de dentro de um clone (.\install.ps1, sem -Ref), instala o codigo local.
 param([string]$Ref, [string]$Lang, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch,
@@ -103,17 +103,21 @@ function Install-WtSidebar {
         (($keys.ToLower() -split '\+' | ForEach-Object { $_.Trim() }) | Sort-Object) -join '+'
     }
 
-    # O menu de aba do sidebar manda estes atalhos, que o Windows Terminal nao tem por padrao.
-    # Adiciona so os que faltam, com ids WtSidebar.*, e pula tecla ja usada por outra acao.
-    # Com $remove, tira as acoes WtSidebar.* (desinstalacao).
-    function Set-TerminalKeys([bool]$remove) {
+    # Configuracao do Windows Terminal que o sidebar precisa:
+    # - atalhos que o menu de aba manda e que o terminal nao tem por padrao. Adiciona so os que faltam,
+    #   com ids WtSidebar.*, e pula tecla ja usada por outra acao;
+    # - windowingBehavior useAnyExisting: abrir o terminal (menu Iniciar, "Abrir no Terminal" do
+    #   Explorer, wt.exe) cria uma aba na janela existente, porque o sidebar acompanha uma janela so.
+    #   O valor anterior fica em terminal-windowing.txt para a desinstalacao restaurar.
+    # Com $remove (desinstalacao), tira as acoes WtSidebar.* e restaura o windowingBehavior.
+    function Set-TerminalSettings([bool]$remove) {
         $local = $env:LOCALAPPDATA
         $path = @(
             "$local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
             "$local\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
             "$local\Microsoft\Windows Terminal\settings.json"
         ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $path) { Write-Host (M 'Windows Terminal: settings.json n\u00e3o encontrado, atalhos n\u00e3o configurados.' 'Windows Terminal: settings.json not found, shortcuts not configured.'); return }
+        if (-not $path) { Write-Host (M 'Windows Terminal: settings.json n\u00e3o encontrado, terminal n\u00e3o configurado.' 'Windows Terminal: settings.json not found, terminal not configured.'); return }
 
         $wanted = @(
             @{ id = 'WtSidebar.openTabColorPicker'; keys = 'ctrl+alt+shift+c'; command = 'openTabColorPicker' },
@@ -125,18 +129,29 @@ function Install-WtSidebar {
             @{ id = 'WtSidebar.closeOtherTabs';     keys = 'ctrl+alt+shift+o'; command = @{ action = 'closeOtherTabs' } },
             @{ id = 'WtSidebar.closeTabsAfter';     keys = 'ctrl+alt+shift+w'; command = @{ action = 'closeTabsAfter' } }
         )
+        $windowingFile = Join-Path $dataDir 'terminal-windowing.txt'
 
         try { $json = Remove-Jsonc ([IO.File]::ReadAllText($path)) | ConvertFrom-Json }
-        catch { Write-Host (M 'Windows Terminal: n\u00e3o consegui ler {0}, atalhos n\u00e3o configurados.' 'Windows Terminal: could not read {0}, shortcuts not configured.' $path); return }
+        catch { Write-Host (M 'Windows Terminal: n\u00e3o consegui ler {0}, terminal n\u00e3o configurado.' 'Windows Terminal: could not read {0}, terminal not configured.' $path); return }
         $actions = @(if ($json.actions) { $json.actions })
         $bindings = @(if ($json.keybindings) { $json.keybindings })
+        $windowing = if ($json.PSObject.Properties['windowingBehavior']) { "$($json.windowingBehavior)" } else { '' }
+        $messages = @()
 
         if ($remove) {
             $newActions = @($actions | Where-Object { "$($_.id)" -notlike 'WtSidebar.*' })
             $newBindings = @($bindings | Where-Object { "$($_.id)" -notlike 'WtSidebar.*' })
-            if ($newActions.Count -eq $actions.Count -and $newBindings.Count -eq $bindings.Count) { return }
-            $actions = $newActions; $bindings = $newBindings
-            $added = @()
+            if ($newActions.Count -ne $actions.Count -or $newBindings.Count -ne $bindings.Count) {
+                $actions = $newActions; $bindings = $newBindings
+                $messages += M 'Windows Terminal: atalhos do WT Sidebar removidos.' 'Windows Terminal: WT Sidebar shortcuts removed.'
+            }
+            # So restaura se o valor ainda e o que o instalador colocou.
+            if ((Test-Path $windowingFile) -and $windowing -eq 'useAnyExisting') {
+                $before = ([IO.File]::ReadAllText($windowingFile)).Trim()
+                if ($before) { $json.windowingBehavior = $before } else { $json.PSObject.Properties.Remove('windowingBehavior') }
+                $messages += M 'Windows Terminal: comportamento de janelas restaurado.' 'Windows Terminal: window behavior restored.'
+            }
+            if (Test-Path $windowingFile) { Remove-Item $windowingFile -Force }
         } else {
             # Teclas ja usadas: em "keybindings" (formato novo) e em "keys" dentro de "actions" (formato antigo).
             $commandById = @{}
@@ -149,14 +164,12 @@ function Install-WtSidebar {
                 foreach ($k in @($a.keys)) { if ($k) { $used[(Get-KeyId $k)] = Get-CommandId $a.command } }
             }
             $added = @()
-            $skipped = 0
             foreach ($w in $wanted) {
                 $keyId = Get-KeyId $w.keys
                 if ($used.ContainsKey($keyId)) {
                     # Mesma acao ja configurada pelo usuario: nada a fazer. Outra acao: nao sobrescreve.
                     if ($used[$keyId] -ne (Get-CommandId $w.command)) {
-                        Write-Host (M 'Windows Terminal: {0} j\u00e1 est\u00e1 em uso ({1}); {2} n\u00e3o configurado.' 'Windows Terminal: {0} is already in use ({1}); {2} not configured.' $w.keys $used[$keyId] (Get-CommandId $w.command))
-                        $skipped++
+                        $messages += M 'Windows Terminal: {0} j\u00e1 est\u00e1 em uso ({1}); {2} n\u00e3o configurado.' 'Windows Terminal: {0} is already in use ({1}); {2} not configured.' $w.keys $used[$keyId] (Get-CommandId $w.command)
                     }
                     continue
                 }
@@ -166,21 +179,37 @@ function Install-WtSidebar {
                 $bindings += [pscustomobject]@{ id = $w.id; keys = $w.keys }
                 $added += $w.keys
             }
-            if ($added.Count -eq 0) {
-                if ($skipped -eq 0) { Write-Host (M 'Windows Terminal: os atalhos j\u00e1 est\u00e3o configurados.' 'Windows Terminal: the shortcuts are already configured.') }
+            if ($added.Count) {
+                $messages += M 'Windows Terminal: atalhos adicionados ({0}).' 'Windows Terminal: shortcuts added ({0}).' ($added -join ', ')
+            }
+
+            # useExisting (janela mais recente da area de trabalho atual) tambem serve; so troca o padrao useNew.
+            if ($windowing -ne 'useAnyExisting' -and $windowing -ne 'useExisting') {
+                New-Item -ItemType Directory -Force $dataDir | Out-Null
+                [IO.File]::WriteAllText($windowingFile, $windowing)
+                if ($json.PSObject.Properties['windowingBehavior']) { $json.windowingBehavior = 'useAnyExisting' }
+                else { $json | Add-Member -NotePropertyName windowingBehavior -NotePropertyValue 'useAnyExisting' }
+                $messages += M 'Windows Terminal: abrir o terminal agora cria uma aba na janela existente, em vez de uma janela nova.' 'Windows Terminal: opening the terminal now adds a tab to the existing window instead of a new window.'
+            }
+            if (-not $added.Count -and $messages.Count -eq 0) {
+                Write-Host (M 'Windows Terminal: j\u00e1 est\u00e1 configurado.' 'Windows Terminal: already configured.')
                 return
             }
         }
-
-        foreach ($name in 'actions', 'keybindings') {
-            $value = if ($name -eq 'actions') { $actions } else { $bindings }
-            if ($json.PSObject.Properties[$name]) { $json.$name = $value }
-            else { $json | Add-Member -NotePropertyName $name -NotePropertyValue $value }
+        if ($messages.Count -eq 0) { return }
+        $changed = $remove -or $added.Count -or ($json.windowingBehavior -ne $windowing)
+        if ($changed) {
+            # Sem "$x = if ...": o pipeline desembrulharia um array de 1 item em objeto solto.
+            $lists = @{ actions = [object[]]$actions; keybindings = [object[]]$bindings }
+            foreach ($name in 'actions', 'keybindings') {
+                $json.PSObject.Properties.Remove($name)
+                if ($lists[$name].Count) { $json | Add-Member -NotePropertyName $name -NotePropertyValue $lists[$name] }
+            }
+            Copy-Item $path "$path.wtsidebar.bak" -Force
+            [IO.File]::WriteAllText($path, ($json | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding($false)))
+            $messages += M 'Backup: {0}' 'Backup: {0}' "$path.wtsidebar.bak"
         }
-        Copy-Item $path "$path.wtsidebar.bak" -Force
-        [IO.File]::WriteAllText($path, ($json | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding($false)))
-        if ($remove) { Write-Host (M 'Windows Terminal: atalhos do WT Sidebar removidos.' 'Windows Terminal: WT Sidebar shortcuts removed.') }
-        else { Write-Host (M 'Windows Terminal: atalhos adicionados ({0}). Backup: {1}' 'Windows Terminal: shortcuts added ({0}). Backup: {1}' ($added -join ', ') "$path.wtsidebar.bak") }
+        $messages | ForEach-Object { Write-Host $_ }
     }
 
     function New-Shortcut([string]$path, [string]$target) {
@@ -214,13 +243,13 @@ function Install-WtSidebar {
     if ($KeysOnly) {
         # Chamado pelo app, que mostra esta saida numa caixa de mensagem.
         [Console]::OutputEncoding = [Text.Encoding]::UTF8
-        Set-TerminalKeys $false
+        Set-TerminalSettings $false
         return
     }
 
     if ($Uninstall) {
         Stop-Sidebar
-        Set-TerminalKeys $true
+        Set-TerminalSettings $true
         Remove-ItemProperty $runKey -Name WtSidebar -ErrorAction SilentlyContinue
         foreach ($p in $startLnk, $legacyLnk, $installDir) {
             if (Test-Path $p) { Remove-Item $p -Recurse -Force }
@@ -278,7 +307,7 @@ function Install-WtSidebar {
             else { Set-ItemProperty $runKey -Name WtSidebar -Value "`"$exe`"" }
         }
 
-        if (-not $NoKeys -and -not $Update) { Set-TerminalKeys $false }
+        if (-not $NoKeys -and -not $Update) { Set-TerminalSettings $false }
         Write-Host (M 'WT Sidebar {0} instalado em {1}' 'WT Sidebar {0} installed to {1}' $version $installDir)
         if (-not $NoLaunch) { Start-Process $exe }
     }
