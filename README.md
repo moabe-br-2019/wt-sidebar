@@ -4,6 +4,8 @@
 
 Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to the left edge of the terminal window, so the official Windows Terminal keeps working and updating unchanged.
 
+**[⬇ Download WtSidebarSetup.exe](https://github.com/moabe-br-2019/wt-sidebar/releases/latest/download/WtSidebarSetup.exe)** · run it and click **Install** ([details](#install)).
+
 ## Features
 
 - Lists every tab with its full title, profile icon and tab color; the active tab is highlighted.
