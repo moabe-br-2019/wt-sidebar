@@ -31,16 +31,47 @@ Vertical tab sidebar for Windows Terminal. It is a separate app that sticks to t
 | `closeTabsAfter` | `ctrl+alt+shift+w` |
 | `splitPane` (`splitMode: duplicate`) | `alt+shift+d` |
 
-## Build
+## Install
 
-No SDK needed; it compiles with the C# compiler that ships with Windows (.NET Framework 4):
+Paste in PowerShell:
 
 ```powershell
-.\build.ps1
-.\WtSidebar.exe
+irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1 | iex
 ```
 
-To start with Windows, put a shortcut to `WtSidebar.exe` in `shell:startup`. Click **WT Sidebar ⌄** in the header and choose **Fechar WT Sidebar** to quit.
+No SDK and no git needed: the installer downloads the source of the latest release, compiles it with the C# compiler that ships with Windows (.NET Framework 4), copies it to `%LOCALAPPDATA%\Programs\WtSidebar`, adds shortcuts to the Start menu and to `shell:startup`, and starts it.
+
+With options, run it as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1))) -NoStartup
+```
+
+- `-NoStartup` skips the startup shortcut.
+- `-Ref v1.2.0` installs that tag (or branch) instead of the latest release.
+- `-Uninstall` removes the app and its shortcuts.
+
+Click **WT Sidebar ⌄** in the header and choose **Fechar WT Sidebar** to quit.
+
+## Updates
+
+The sidebar checks the latest GitHub release on start and every 6 hours. When there is a newer one, the header menu shows **Atualizar para vX.Y.Z**; **Buscar atualizações** checks on demand. Updating closes the sidebar, runs the installer again for the new tag and starts it. The log goes to `%LOCALAPPDATA%\WtSidebar\update.log`.
+
+## Development
+
+```powershell
+git clone https://github.com/moabe-br-2019/wt-sidebar.git
+cd wt-sidebar
+.\build.ps1          # compiles WtSidebar.exe in the clone, no auto update
+.\install.ps1        # installs the local code (version from git describe)
+```
+
+To publish a version, tag it and create a GitHub release; installed copies pick it up on their next check:
+
+```powershell
+git tag v1.2.0; git push origin v1.2.0
+gh release create v1.2.0 --generate-notes
+```
 
 ## Limitations
 

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Net;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -107,6 +108,10 @@ namespace WtSidebar
         readonly ContextMenuStrip appMenu = new ContextMenuStrip();
         readonly List<ToolStripItem> tabMenuItems = new List<ToolStripItem>(); // so aparecem com clique numa aba
         TabInfo menuTarget;
+        readonly ToolStripMenuItem updateItem = new ToolStripMenuItem("Buscar atualizações");
+        ReleaseInfo newRelease; // release mais nova que a instalada, se houver
+        int checkingUpdates;
+        readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
 
         static readonly Condition TabItemCondition =
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem);
@@ -157,6 +162,9 @@ namespace WtSidebar
             menu.Items.Add("Nova aba", null, delegate { NewTab(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Sair", null, delegate { Close(); });
+            appMenu.Items.Add(new ToolStripMenuItem("Versão " + (InstalledVersion() ?? "de desenvolvimento")) { Enabled = false });
+            appMenu.Items.Add(updateItem);
+            appMenu.Items.Add(new ToolStripSeparator());
             appMenu.Items.Add(new ToolStripMenuItem("Fechar WT Sidebar", null, delegate { Close(); }));
             appMenu.ShowImageMargin = false;
             foreach (var m in new[] { menu, profileMenu, appMenu })
@@ -165,6 +173,9 @@ namespace WtSidebar
                 m.ForeColor = Fg;
                 m.ShowImageMargin = true;
             }
+
+            updateItem.ForeColor = Fg;
+            updateItem.Click += delegate { CheckUpdatesAsync(true); };
 
             findTimer.Interval = 1000;
             findTimer.Tick += delegate { EnsureAttached(); };
@@ -199,6 +210,10 @@ namespace WtSidebar
             EnsureAttached();
             findTimer.Start();
             scanTimer = new System.Threading.Timer(delegate { Scan(); }, null, 0, 500);
+            CheckUpdatesAsync(false);
+            updateTimer.Interval = (int)UpdateInterval.TotalMilliseconds;
+            updateTimer.Tick += delegate { CheckUpdatesAsync(false); };
+            updateTimer.Start();
         }
 
         protected override void OnShown(EventArgs e)
@@ -210,6 +225,7 @@ namespace WtSidebar
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             findTimer.Stop();
+            updateTimer.Stop();
             if (scanTimer != null) scanTimer.Dispose();
             Unhook();
             SetHotkey(false);
@@ -720,6 +736,164 @@ namespace WtSidebar
         {
             Native.SetForegroundWindow(wt);
             SendKeys.SendWait(keys);
+        }
+
+        // ---------- atualizacoes (releases do GitHub) ----------
+
+        const string Repo = "moabe-br-2019/wt-sidebar";
+        static readonly TimeSpan UpdateInterval = TimeSpan.FromHours(6);
+
+        class ReleaseInfo
+        {
+            public string Tag;
+            public string Notes;
+        }
+
+        static string InstallDir { get { return Path.GetDirectoryName(Application.ExecutablePath); } }
+
+        // Versao gravada pelo install.ps1 ao lado do exe; null num build de desenvolvimento (build.ps1).
+        static string InstalledVersion()
+        {
+            try
+            {
+                string file = Path.Combine(InstallDir, "version.txt");
+                return File.Exists(file) ? File.ReadAllText(file).Trim() : null;
+            }
+            catch (Exception ex) { Log(ex); return null; }
+        }
+
+        // API do GitHub. Sem login primeiro; se o repositorio ainda for privado, tenta o token do gh.
+        static string GitHubGet(string path)
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            string token = null;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                var req = (HttpWebRequest)WebRequest.Create("https://api.github.com/repos/" + Repo + "/" + path);
+                req.UserAgent = "WtSidebar";
+                req.Accept = "application/vnd.github+json";
+                req.Timeout = 20000;
+                if (token != null) req.Headers["Authorization"] = "Bearer " + token;
+                try
+                {
+                    using (var resp = req.GetResponse())
+                    using (var reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                        return reader.ReadToEnd();
+                }
+                catch (WebException ex)
+                {
+                    var http = ex.Response as HttpWebResponse;
+                    bool denied = http != null && (http.StatusCode == HttpStatusCode.NotFound || http.StatusCode == HttpStatusCode.Unauthorized);
+                    if (!denied || token != null || (token = GhToken()) == null) { Log(ex); return null; }
+                }
+            }
+            return null;
+        }
+
+        static string GhToken()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("gh", "auth token")
+                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+                using (var p = Process.Start(psi))
+                {
+                    string output = p.StandardOutput.ReadToEnd().Trim();
+                    if (!p.WaitForExit(10000)) { p.Kill(); return null; }
+                    return p.ExitCode == 0 && output.Length > 0 ? output : null;
+                }
+            }
+            catch (Exception) { return null; } // gh nao instalado
+        }
+
+        static ReleaseInfo LatestRelease()
+        {
+            string json = GitHubGet("releases/latest");
+            if (json == null) return null;
+            try
+            {
+                var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
+                string tag = Str(d, "tag_name");
+                return tag == null ? null : new ReleaseInfo { Tag = tag, Notes = Str(d, "body") ?? "" };
+            }
+            catch (Exception ex) { Log(ex); return null; }
+        }
+
+        // "v1.10.0" > "v1.9.2". Tags fora do padrao contam como novas quando diferentes da instalada.
+        static bool IsNewer(string latest, string installed)
+        {
+            Version a, b;
+            if (Version.TryParse(latest.TrimStart('v', 'V').Split('-')[0], out a) &&
+                Version.TryParse(installed.TrimStart('v', 'V').Split('-')[0], out b))
+                return a > b;
+            return !string.Equals(latest, installed, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Ao abrir e a cada 6 h so marca o menu; pelo menu (interactive) mostra o resultado e oferece atualizar.
+        void CheckUpdatesAsync(bool interactive)
+        {
+            string installed = InstalledVersion();
+            if (installed == null)
+            {
+                if (interactive)
+                    MessageBox.Show(this, "Esta é uma versão de desenvolvimento (build.ps1), sem atualização automática.\n\n" +
+                        "Para instalar a versão publicada, rode o install.ps1.",
+                        "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (Interlocked.Exchange(ref checkingUpdates, 1) == 1) return;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                var release = LatestRelease();
+                Interlocked.Exchange(ref checkingUpdates, 0);
+                if (IsDisposed) return;
+                try { BeginInvoke((Action)delegate { OnUpdatesChecked(installed, release, interactive); }); }
+                catch (InvalidOperationException) { }
+            });
+        }
+
+        void OnUpdatesChecked(string installed, ReleaseInfo release, bool interactive)
+        {
+            if (release != null) newRelease = IsNewer(release.Tag, installed) ? release : null;
+            updateItem.Text = newRelease != null ? "Atualizar para " + newRelease.Tag : "Buscar atualizações";
+            updateItem.ForeColor = newRelease != null ? Accent : Fg;
+            if (!interactive) return;
+
+            if (release == null)
+                MessageBox.Show(this, "Não foi possível consultar as versões no GitHub.",
+                    "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else if (newRelease == null)
+                MessageBox.Show(this, "O WT Sidebar já está na versão mais recente (" + installed + ").",
+                    "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            else
+            {
+                string notes = newRelease.Notes.Trim();
+                if (notes.Length > 800) notes = notes.Substring(0, 800) + "…";
+                if (MessageBox.Show(this, "Versão " + newRelease.Tag + " disponível (instalada: " + installed + ").\n\n" +
+                        (notes.Length > 0 ? notes + "\n\n" : "") + "Atualizar agora? O WT Sidebar fecha e abre de novo.",
+                        "WT Sidebar", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                    RunUpdate(newRelease.Tag);
+            }
+        }
+
+        // O install.ps1 copiado ao lado do exe espera o app fechar, baixa a versao, compila, reinstala e abre de novo.
+        void RunUpdate(string tag)
+        {
+            string script = Path.Combine(InstallDir, "install.ps1");
+            if (!File.Exists(script))
+            {
+                MessageBox.Show(this, "Não achei " + script + ". Reinstale com o install.ps1.",
+                    "WT Sidebar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + script + "\" -Update -Ref " + tag)
+                    { UseShellExecute = false, CreateNoWindow = true });
+                Close();
+            }
+            catch (Exception ex) { Log(ex); }
         }
 
         // ---------- menu de perfis (igual ao "⌄" do terminal) ----------
