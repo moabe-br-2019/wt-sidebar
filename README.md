@@ -50,7 +50,9 @@ They are saved in `%LOCALAPPDATA%\WtSidebar\settings.json`.
 
 ## Install
 
-Paste in PowerShell:
+Download **[WtSidebarSetup.exe](https://github.com/moabe-br-2019/wt-sidebar/releases/latest/download/WtSidebarSetup.exe)** from the latest release, run it and click **Install**. Windows may show "Windows protected your PC" because the file is not signed: click **More info** and **Run anyway**.
+
+Or paste in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/moabe-br-2019/wt-sidebar/main/install.ps1 | iex
@@ -67,7 +69,7 @@ With options, run it as a script block:
 - `-NoStartup` does not start it with Windows.
 - `-NoKeys` leaves the terminal's `settings.json` untouched (see How it works).
 - `-Ref v1.2.0` installs that tag (or branch) instead of the latest release.
-- `-Uninstall` removes the app, its shortcuts and its terminal changes (settings and recent folders stay in `%LOCALAPPDATA%\WtSidebar`).
+- `-Uninstall` (or **Settings > Apps > Installed apps > WT Sidebar > Uninstall**) removes the app, its shortcuts and its terminal changes (settings and recent folders stay in `%LOCALAPPDATA%\WtSidebar`).
 
 Click **WT Sidebar ⌄** in the header and choose **Close WT Sidebar** to quit.
 
@@ -89,6 +91,13 @@ To publish a version, tag it and create a GitHub release; installed copies pick 
 ```powershell
 git tag v1.2.0; git push origin v1.2.0
 gh release create v1.2.0 --generate-notes
+```
+
+`WtSidebarSetup.exe` carries `install.ps1` inside and always downloads the latest release, so it only needs rebuilding when `install.ps1` changes. Attach it to each release so the download link above keeps working:
+
+```powershell
+.\setup\build-setup.ps1
+gh release upload v1.2.0 setup\WtSidebarSetup.exe
 ```
 
 ## Limitations

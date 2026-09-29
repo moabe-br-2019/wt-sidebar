@@ -15,14 +15,15 @@
 #   -Lang en      mensagens em ingles (ou pt); por padrao segue o idioma do Windows
 #   -Update       usado pelo menu "Atualizar" do app: roda escondido, grava log e avisa se falhar
 #   -KeysOnly     so configura o terminal (botao nas configuracoes do app)
+#   -Gui          com -Uninstall, avisa numa janela no fim (desinstalar por Aplicativos instalados)
 #
 # Rodado de dentro de um clone (.\install.ps1, sem -Ref), instala o codigo local.
 param([string]$Ref, [string]$Lang, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch,
-      [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly)
+      [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly, [switch]$Gui)
 
 function Install-WtSidebar {
     param([string]$Ref, [string]$Lang, [switch]$NoStartup, [switch]$NoKeys, [switch]$NoLaunch,
-          [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly, [string]$ScriptDir)
+          [switch]$Uninstall, [switch]$Update, [switch]$KeysOnly, [switch]$Gui, [string]$ScriptDir)
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -34,6 +35,7 @@ function Install-WtSidebar {
     $startLnk   = Join-Path ([Environment]::GetFolderPath('Programs')) 'WT Sidebar.lnk'
     $legacyLnk  = Join-Path ([Environment]::GetFolderPath('Startup')) 'WtSidebar.lnk' # versoes antigas
     $runKey     = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $appsKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WtSidebar' # Aplicativos instalados
 
     if ($Lang -ne 'pt' -and $Lang -ne 'en') { $Lang = if ((Get-UICulture).TwoLetterISOLanguageName -eq 'pt') { 'pt' } else { 'en' } }
     # Mensagem no idioma escolhido. O arquivo fica so em ASCII (o irm | iex quebra com BOM), entao os
@@ -251,10 +253,14 @@ function Install-WtSidebar {
         Stop-Sidebar
         Set-TerminalSettings $true
         Remove-ItemProperty $runKey -Name WtSidebar -ErrorAction SilentlyContinue
-        foreach ($p in $startLnk, $legacyLnk, $installDir) {
+        foreach ($p in $startLnk, $legacyLnk, $installDir, $appsKey) {
             if (Test-Path $p) { Remove-Item $p -Recurse -Force }
         }
         Write-Host (M 'WT Sidebar removido.' 'WT Sidebar removed.')
+        if ($Gui) {
+            Add-Type -AssemblyName System.Windows.Forms
+            [System.Windows.Forms.MessageBox]::Show((M 'WT Sidebar removido.' 'WT Sidebar removed.'), 'WT Sidebar', 'OK', 'Information') | Out-Null
+        }
         return
     }
 
@@ -297,6 +303,16 @@ function Install-WtSidebar {
         Set-Content (Join-Path $installDir 'version.txt') $version -Encoding ASCII
 
         New-Shortcut $startLnk $exe
+        # Entrada em Aplicativos instalados, para desinstalar pelo Windows.
+        New-Item $appsKey -Force | Out-Null
+        $uninstallCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installDir\install.ps1`" -Uninstall -Gui -Lang $Lang"
+        foreach ($v in @(@('DisplayName', 'WT Sidebar'), @('DisplayVersion', "$version"), @('Publisher', 'Moabe'),
+                         @('DisplayIcon', $exe), @('InstallLocation', $installDir), @('UninstallString', $uninstallCmd),
+                         @('URLInfoAbout', "https://github.com/$repo"))) {
+            Set-ItemProperty $appsKey -Name $v[0] -Value $v[1]
+        }
+        Set-ItemProperty $appsKey -Name NoModify -Value 1 -Type DWord
+        Set-ItemProperty $appsKey -Name NoRepair -Value 1 -Type DWord
         # Iniciar com o Windows: no update fica como o usuario deixou nas configuracoes do app.
         if (Test-Path $legacyLnk) {
             Remove-Item $legacyLnk -Force
