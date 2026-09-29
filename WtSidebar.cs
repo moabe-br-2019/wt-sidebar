@@ -806,6 +806,101 @@ namespace WtSidebar
             catch (Exception) { return null; }
         }
 
+        // ---------- abrir Claude Code / Codex numa pasta ----------
+
+        const int MaxRecentFolders = 10;
+
+        static string RecentFoldersFile
+        {
+            get
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WtSidebar", "recent-folders.txt");
+            }
+        }
+
+        static List<string> LoadRecentFolders()
+        {
+            var list = new List<string>();
+            try
+            {
+                if (File.Exists(RecentFoldersFile))
+                    foreach (var line in File.ReadAllLines(RecentFoldersFile))
+                        if (line.Trim().Length > 0 && Directory.Exists(line) && list.Count < MaxRecentFolders)
+                            list.Add(line);
+            }
+            catch (Exception ex) { Log(ex); }
+            return list;
+        }
+
+        static void RememberFolder(string dir)
+        {
+            var list = LoadRecentFolders();
+            list.RemoveAll(d => string.Equals(d, dir, StringComparison.OrdinalIgnoreCase));
+            list.Insert(0, dir);
+            if (list.Count > MaxRecentFolders) list.RemoveRange(MaxRecentFolders, list.Count - MaxRecentFolders);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(RecentFoldersFile));
+                File.WriteAllLines(RecentFoldersFile, list.ToArray());
+            }
+            catch (Exception ex) { Log(ex); }
+        }
+
+        // Submenu com as pastas recentes e "Escolher pasta...", que abre o comando numa aba nova.
+        ToolStripMenuItem AgentMenu(string label, string command)
+        {
+            var menuItem = new ToolStripMenuItem(label) { ForeColor = Fg };
+            var dd = (ToolStripDropDownMenu)menuItem.DropDown;
+            dd.Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors());
+            dd.ShowImageMargin = false;
+            dd.ShowItemToolTips = true;
+            dd.Font = profileMenu.Font;
+
+            foreach (var dir in LoadRecentFolders())
+            {
+                string folder = dir;
+                string name = Path.GetFileName(folder.TrimEnd('\\'));
+                if (name.Length == 0) name = folder;
+                menuItem.DropDownItems.Add(new ToolStripMenuItem(name, null, delegate { LaunchAgent(command, folder); })
+                    { ForeColor = Fg, ToolTipText = folder });
+            }
+            if (menuItem.DropDownItems.Count > 0) menuItem.DropDownItems.Add(new ToolStripSeparator());
+            menuItem.DropDownItems.Add(new ToolStripMenuItem("Escolher pasta…", null, delegate
+            {
+                string dir = PickFolder();
+                if (dir != null) LaunchAgent(command, dir);
+            }) { ForeColor = Fg });
+            return menuItem;
+        }
+
+        string PickFolder()
+        {
+            using (var dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "Pasta do projeto";
+                dlg.ShowNewFolderButton = true;
+                var recent = LoadRecentFolders();
+                if (recent.Count > 0) dlg.SelectedPath = recent[0];
+                return dlg.ShowDialog(this) == DialogResult.OK ? dlg.SelectedPath : null;
+            }
+        }
+
+        // Aba nova com o perfil padrao, na pasta, rodando o comando. -NoExit deixa o shell aberto
+        // quando o Claude/Codex sai.
+        void LaunchAgent(string command, string dir)
+        {
+            RememberFolder(dir);
+            // "C:\" terminaria em \" e escaparia a aspa na linha de comando.
+            string d = dir.EndsWith("\\") ? dir + "." : dir;
+            string args = "-w 0 nt -d \"" + d + "\" powershell.exe -NoExit -Command " + command;
+            try
+            {
+                Process.Start(new ProcessStartInfo("wt.exe", args) { UseShellExecute = true });
+            }
+            catch (Exception ex) { Log(ex); }
+        }
+
         void ShowProfileMenu(Point at)
         {
             foreach (ToolStripItem old in profileMenu.Items)
@@ -840,6 +935,10 @@ namespace WtSidebar
             {
                 profileMenu.Items.Add(new ToolStripMenuItem("Nova aba", null, delegate { NewTab(); }) { ForeColor = Fg });
             }
+
+            profileMenu.Items.Add(new ToolStripSeparator());
+            profileMenu.Items.Add(AgentMenu("Claude Code em", "claude"));
+            profileMenu.Items.Add(AgentMenu("Codex em", "codex"));
 
             profileMenu.Items.Add(new ToolStripSeparator());
             profileMenu.Items.Add(new ToolStripMenuItem("Configurações", null, delegate { SendToTerminal("^,"); })
