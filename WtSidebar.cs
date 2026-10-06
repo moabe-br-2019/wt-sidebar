@@ -43,6 +43,16 @@ namespace WtSidebar
         public int IconHash;
     }
 
+    // Guia guardada entre varreduras (so a thread do Scan usa).
+    class TabRef
+    {
+        public AutomationElement Element;
+        public string Key;
+        public bool HadBounds;          // tinha retangulo na ultima busca
+        public AutomationElement Image; // icone do perfil na guia, se houver
+        public int ImageTries;
+    }
+
     class SampledColor
     {
         public Color Color;
@@ -90,6 +100,14 @@ namespace WtSidebar
         readonly Dictionary<string, TabInfo> iconCache = new Dictionary<string, TabInfo>();
         static readonly Condition ImageCondition =
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Image);
+        // Cada busca na UI Automation vaza memoria aqui e no terminal; reler elementos ja obtidos quase nao vaza.
+        // Por isso as guias ficam guardadas e a busca so se repete quando elas deixam de bater com o terminal.
+        static readonly TimeSpan FindInterval = TimeSpan.FromSeconds(30);
+        const int ImageMaxTries = 4;
+        IntPtr refsWindow = IntPtr.Zero;
+        AutomationElement rootElement;
+        List<TabRef> tabRefs;
+        DateTime lastFind;
         string tabsSignature = "";
         int hover = HitNone;
         bool hoverClose;
@@ -620,36 +638,19 @@ namespace WtSidebar
                 bool canSample = Native.GetForegroundWindow() == h;
                 try
                 {
-                    var root = AutomationElement.FromHandle(h);
-                    foreach (AutomationElement el in root.FindAll(TreeScope.Descendants, TabItemCondition))
+                    bool fresh = tabRefs == null || refsWindow != h || DateTime.UtcNow - lastFind > FindInterval;
+                    if (fresh) FindTabs(h);
+                    if (!ReadTabs(canSample, list, sig) && !fresh)
                     {
-                        object pattern;
-                        bool selected = el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)
-                            && ((SelectionItemPattern)pattern).Current.IsSelected;
-                        var t = new TabInfo { Title = el.Current.Name, Selected = selected, Element = el };
-                        string key = string.Join(",", el.GetRuntimeId());
-                        if (canSample)
-                        {
-                            Color bg = SampleTabColor(el, key, selected);
-                            if (!bg.IsEmpty) CaptureIcon(el, key, bg);
-                        }
-                        SampledColor sc;
-                        if (colorCache.TryGetValue(key, out sc)) t.TabColor = sc.Color;
-                        TabInfo cached;
-                        if (iconCache.TryGetValue(key, out cached))
-                        {
-                            t.Icon = cached.Icon;
-                            t.IconHash = cached.IconHash;
-                        }
-                        list.Add(t);
-                        sig.Append(selected ? '*' : ' ').Append(t.TabColor.ToArgb()).Append(' ').Append(t.IconHash)
-                            .Append(t.Title).Append('\n');
+                        FindTabs(h);
+                        ReadTabs(canSample, list, sig);
                     }
                 }
-                catch (ElementNotAvailableException) { return; }
-                catch (COMException) { return; }
+                catch (ElementNotAvailableException) { ForgetTabs(); return; }
+                catch (COMException) { ForgetTabs(); return; }
                 catch (Exception ex)
                 {
+                    ForgetTabs();
                     Log(ex);
                     return;
                 }
@@ -665,6 +666,93 @@ namespace WtSidebar
             {
                 Interlocked.Exchange(ref scanning, 0);
             }
+        }
+
+        void ForgetTabs()
+        {
+            tabRefs = null;
+            rootElement = null;
+        }
+
+        // Busca as guias no terminal e guarda os elementos para as proximas varreduras.
+        void FindTabs(IntPtr h)
+        {
+            if (rootElement == null || refsWindow != h)
+            {
+                rootElement = AutomationElement.FromHandle(h);
+                refsWindow = h;
+                tabRefs = null;
+            }
+            var found = rootElement.FindAll(TreeScope.Descendants, TabItemCondition);
+            // Com um menu aberto no terminal, a UI Automation so expoe o menu e a busca vem vazia:
+            // mantem as guias guardadas.
+            if (found.Count == 0) return;
+
+            var refs = new List<TabRef>();
+            var keys = new HashSet<string>();
+            foreach (AutomationElement el in found)
+            {
+                var tr = new TabRef { Element = el, Key = string.Join(",", el.GetRuntimeId()) };
+                tr.HadBounds = !el.Current.BoundingRectangle.IsEmpty;
+                refs.Add(tr);
+                keys.Add(tr.Key);
+            }
+            tabRefs = refs;
+            lastFind = DateTime.UtcNow;
+
+            // Guias fechadas saem dos caches. O bitmap pode estar sendo desenhado na thread da UI; fica para o GC.
+            foreach (string key in new List<string>(colorCache.Keys))
+                if (!keys.Contains(key)) colorCache.Remove(key);
+            foreach (string key in new List<string>(iconCache.Keys))
+                if (!keys.Contains(key)) iconCache.Remove(key);
+        }
+
+        // Le as guias guardadas. Devolve false quando elas ja nao batem com o terminal: guia fechada continua
+        // respondendo, mas perde o retangulo; guia nova chega selecionada; guia movida sai da ordem.
+        bool ReadTabs(bool canSample, List<TabInfo> list, StringBuilder sig)
+        {
+            list.Clear();
+            sig.Length = 0;
+            if (tabRefs == null) return true;
+            bool anySelected = false, inPlace = true;
+            double lastLeft = double.MinValue;
+            foreach (TabRef tr in tabRefs)
+            {
+                AutomationElement el = tr.Element;
+                string key = tr.Key;
+                object pattern;
+                bool selected = el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)
+                    && ((SelectionItemPattern)pattern).Current.IsSelected;
+                anySelected |= selected;
+                var r = el.Current.BoundingRectangle;
+                if (r.IsEmpty)
+                {
+                    if (tr.HadBounds) inPlace = false;
+                }
+                else
+                {
+                    if (r.Left < lastLeft) inPlace = false;
+                    lastLeft = r.Left;
+                }
+                var t = new TabInfo { Title = el.Current.Name, Selected = selected, Element = el };
+                if (canSample)
+                {
+                    Color bg = SampleTabColor(el, key, selected);
+                    if (!bg.IsEmpty) CaptureIcon(tr, bg);
+                }
+                SampledColor sc;
+                if (colorCache.TryGetValue(key, out sc)) t.TabColor = sc.Color;
+                TabInfo cached;
+                if (iconCache.TryGetValue(key, out cached))
+                {
+                    t.Icon = cached.Icon;
+                    t.IconHash = cached.IconHash;
+                }
+                list.Add(t);
+                sig.Append(selected ? '*' : ' ').Append(t.TabColor.ToArgb()).Append(' ').Append(t.IconHash)
+                    .Append(t.Title).Append('\n');
+            }
+            return anySelected && inPlace;
         }
 
         // Le um pixel da guia, entre a borda esquerda e o icone. Guia sem cor e cinza; com cor e saturada.
@@ -689,9 +777,16 @@ namespace WtSidebar
 
         // Copia da tela o icone do perfil que o terminal desenha na guia.
         // Os pixels com a cor de fundo da guia viram transparentes, para o icone assentar na sidebar.
-        void CaptureIcon(AutomationElement tab, string key, Color bg)
+        void CaptureIcon(TabRef tr, Color bg)
         {
-            var img = tab.FindFirst(TreeScope.Children, ImageCondition);
+            string key = tr.Key;
+            // O icone pode aparecer um pouco depois da guia; depois de algumas tentativas, guia sem icone.
+            if (tr.Image == null && tr.ImageTries < ImageMaxTries)
+            {
+                tr.ImageTries++;
+                tr.Image = tr.Element.FindFirst(TreeScope.Children, ImageCondition);
+            }
+            var img = tr.Image;
             if (img == null) return;
             var r = img.Current.BoundingRectangle;
             if (r.IsEmpty || r.Width < 4 || r.Width > 64) return;
