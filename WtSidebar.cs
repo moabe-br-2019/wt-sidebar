@@ -155,7 +155,7 @@ namespace WtSidebar
             SetupTrayIcon();
             updateItem.Click += delegate { CheckUpdatesAsync(true); };
             findTimer.Interval = 1000;
-            findTimer.Tick += delegate { EnsureAttached(); };
+            findTimer.Tick += delegate { EnsureAttached(); if (!dragging) TraceState("tick"); };
         }
 
         static string T(string pt, string en) { return L.T(pt, en); }
@@ -203,6 +203,7 @@ namespace WtSidebar
 
             appMenu.Items.Add(new ToolStripMenuItem(T("Versão ", "Version ") + (InstalledVersion() ?? T("de desenvolvimento", "development")))
                 { Enabled = false });
+            appMenu.Items.Add(new ToolStripMenuItem(T("Abrir terminal", "Open terminal"), null, delegate { ShowTerminal(); }) { ForeColor = Fg });
             appMenu.Items.Add(updateItem);
             appMenu.Items.Add(new ToolStripMenuItem(T("Configurações…", "Settings…"), null, delegate { ShowSettings(); }) { ForeColor = Fg });
             appMenu.Items.Add(new ToolStripSeparator());
@@ -315,6 +316,10 @@ namespace WtSidebar
             updateTimer.Interval = (int)UpdateInterval.TotalMilliseconds;
             updateTimer.Tick += delegate { if (settings.AutoUpdate) CheckUpdatesAsync(false); };
             updateTimer.Start();
+            TraceLine("inicio " + (InstalledVersion() ?? "dev"));
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
+            Microsoft.Win32.SystemEvents.SessionSwitch += OnSessionSwitch;
+            Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerMode;
         }
 
         protected override void OnShown(EventArgs e)
@@ -328,6 +333,10 @@ namespace WtSidebar
             findTimer.Stop();
             updateTimer.Stop();
             if (scanTimer != null) scanTimer.Dispose();
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
+            Microsoft.Win32.SystemEvents.SessionSwitch -= OnSessionSwitch;
+            Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerMode;
+            TraceState("fechando (" + e.CloseReason + ")");
             Unhook();
             SetHotkey(false);
             trayIcon.Visible = false; // senao o icone fica na bandeja ate passar o mouse
@@ -341,7 +350,7 @@ namespace WtSidebar
 
         // ---------- encontrar e acoplar na janela do terminal ----------
 
-        static IntPtr FindTerminalWindow()
+        static IntPtr FindTerminalWindow(bool visibleOnly = true)
         {
             IntPtr found = IntPtr.Zero;
             var cls = new StringBuilder(64);
@@ -349,7 +358,7 @@ namespace WtSidebar
             {
                 cls.Length = 0;
                 Native.GetClassName(h, cls, cls.Capacity);
-                if (cls.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS" && Native.IsWindowVisible(h))
+                if (cls.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS" && (!visibleOnly || Native.IsWindowVisible(h)))
                 {
                     found = h;
                     return false;
@@ -365,6 +374,41 @@ namespace WtSidebar
             var h = FindTerminalWindow();
             if (h == wt) return;
             AttachTo(h);
+        }
+
+        // Item "Abrir terminal" do menu: traz a janela do terminal de volta quando ela some da tela
+        // (minimizada, escondida ou fora dos monitores). Sem janela nenhuma, abre um terminal novo.
+        void ShowTerminal()
+        {
+            IntPtr h = wt != IntPtr.Zero && Native.IsWindow(wt) ? wt : FindTerminalWindow(false);
+            if (h == IntPtr.Zero)
+            {
+                TraceLine("abrir: sem janela, abre terminal novo");
+                NewTab();
+                return;
+            }
+            if (h != wt) AttachTo(h);
+            TraceLine("abrir: " + StateText());
+
+            if (Native.IsIconic(h)) Native.ShowWindow(h, Native.SW_RESTORE);
+            else if (!Native.IsWindowVisible(h)) Native.ShowWindow(h, Native.SW_SHOW);
+
+            Native.RECT r;
+            Native.GetWindowRect(h, out r);
+            var rect = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+            bool onScreen = false;
+            foreach (Screen sc in Screen.AllScreens)
+                if (sc.WorkingArea.IntersectsWith(rect)) onScreen = true;
+            if (!onScreen)
+            {
+                var work = Screen.PrimaryScreen.WorkingArea;
+                pseudoMax = false;
+                Native.SetWindowPos(h, IntPtr.Zero, work.Left + SidebarWidth, work.Top,
+                    Math.Min(rect.Width, work.Width - SidebarWidth), Math.Min(rect.Height, work.Height),
+                    Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+            }
+            Native.SetForegroundWindow(h);
+            HandleLocation();
         }
 
         void AttachTo(IntPtr h)
@@ -438,9 +482,13 @@ namespace WtSidebar
                     HandleLocation();
                     break;
                 case Native.EVENT_SYSTEM_MINIMIZESTART:
+                    TraceLine("terminal minimizou");
                     Hide();
                     break;
                 case Native.EVENT_SYSTEM_MINIMIZEEND:
+                    TraceLine("terminal saiu do minimizado");
+                    HandleLocation();
+                    break;
                 case Native.EVENT_OBJECT_LOCATIONCHANGE:
                     HandleLocation();
                     break;
@@ -475,6 +523,7 @@ namespace WtSidebar
             try
             {
                 bool wasPseudo = pseudoMax;
+                TraceLine("HandleMaximize wasPseudo=" + wasPseudo + " savedRect=" + RectText(savedRect));
                 Native.ShowWindow(wt, Native.SW_RESTORE);
                 if (wasPseudo)
                 {
@@ -531,6 +580,9 @@ namespace WtSidebar
             int r = win.Right - ext.Right, b = win.Bottom - ext.Bottom;
             bool wasAdjusting = adjusting;
             adjusting = true;
+            if (frame.Left - l != win.Left || frame.Top - t != win.Top || frame.Right + r != win.Right || frame.Bottom + b != win.Bottom)
+                TraceLine("sidebar move terminal de " + RectText(win) + " para " + RectText(new Native.RECT
+                    { Left = frame.Left - l, Top = frame.Top - t, Right = frame.Right + r, Bottom = frame.Bottom + b }));
             try
             {
                 Native.SetWindowPos(wt, IntPtr.Zero, frame.Left - l, frame.Top - t,
@@ -822,6 +874,66 @@ namespace WtSidebar
                     DateTime.Now.ToString("s") + " " + ex + Environment.NewLine);
             }
             catch (Exception) { }
+        }
+
+        // Diagnostico da janela do terminal sumindo: %TEMP%\WtSidebar-trace.log ganha uma linha cada vez que
+        // o estado da janela muda, que a sidebar move o terminal, ou que a tela/sessao/energia muda.
+        static readonly object traceLock = new object();
+        string lastTrace = "";
+
+        static void TraceLine(string text)
+        {
+            try
+            {
+                lock (traceLock)
+                    File.AppendAllText(Path.Combine(Path.GetTempPath(), "WtSidebar-trace.log"),
+                        DateTime.Now.ToString("s") + " " + text + Environment.NewLine);
+            }
+            catch (Exception) { }
+        }
+
+        static string RectText(Native.RECT r)
+        {
+            return "(" + r.Left + "," + r.Top + ")-(" + r.Right + "," + r.Bottom + ")";
+        }
+
+        string StateText()
+        {
+            IntPtr h = wt;
+            if (h == IntPtr.Zero) return "sem terminal";
+            if (!Native.IsWindow(h)) return "wt=0x" + h.ToInt64().ToString("X") + " destruida";
+            Native.RECT r;
+            Native.GetWindowRect(h, out r);
+            int cloaked;
+            Native.DwmGetWindowAttribute(h, Native.DWMWA_CLOAKED, out cloaked, sizeof(int));
+            return "wt=0x" + h.ToInt64().ToString("X") + " visivel=" + Native.IsWindowVisible(h) + " min=" + Native.IsIconic(h)
+                + " max=" + Native.IsZoomed(h) + " cloaked=" + cloaked + " rect=" + RectText(r) + " pseudoMax=" + pseudoMax
+                + " sidebar=" + Visible + " telas=" + Screen.AllScreens.Length;
+        }
+
+        void TraceState(string why)
+        {
+            string s = StateText();
+            if (s == lastTrace) return;
+            lastTrace = s;
+            TraceLine(why + ": " + s);
+        }
+
+        void OnDisplayChanged(object sender, EventArgs e)
+        {
+            var sb = new StringBuilder("telas mudaram:");
+            foreach (Screen sc in Screen.AllScreens) sb.Append(' ').Append(sc.Bounds);
+            TraceLine(sb.ToString());
+        }
+
+        void OnSessionSwitch(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+        {
+            TraceLine("sessao: " + e.Reason);
+        }
+
+        void OnPowerMode(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            TraceLine("energia: " + e.Mode);
         }
 
         void SetTabs(List<TabInfo> list, string signature)
@@ -1690,9 +1802,11 @@ namespace WtSidebar
         public const int OBJID_WINDOW = 0;
 
         public const int SW_MAXIMIZE = 3;
+        public const int SW_SHOW = 5;
         public const int SW_RESTORE = 9;
         public const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
         public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+        public const int DWMWA_CLOAKED = 14;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -1726,6 +1840,7 @@ namespace WtSidebar
         [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
         [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
+        [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
         [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
