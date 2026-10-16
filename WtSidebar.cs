@@ -1088,6 +1088,7 @@ namespace WtSidebar
         {
             updateItem.Text = newRelease != null ? T("Atualizar para ", "Update to ") + newRelease.Tag : T("Buscar atualizações", "Check for updates");
             updateItem.ForeColor = newRelease != null ? Accent : Fg;
+            Invalidate(); // bolinha de atualizacao no cabecalho
         }
 
         void OnUpdatesChecked(string installed, ReleaseInfo release, bool interactive)
@@ -1386,7 +1387,8 @@ namespace WtSidebar
             int pad = S(12);
             int textW = TextRenderer.MeasureText("WT Sidebar", itemFont, Size.Empty, TextFormatFlags.NoPadding).Width;
             int iconW = headerIcon != null ? HeaderIconSize + S(8) : 0;
-            return new Rectangle(pad - S(6), S(4), iconW + textW + S(22), ListTop - S(8));
+            int dotW = newRelease != null ? S(14) : 0;
+            return new Rectangle(pad - S(6), S(4), iconW + textW + S(22) + dotW, ListTop - S(8));
         }
 
         int HitTest(Point p)
@@ -1498,6 +1500,12 @@ namespace WtSidebar
                 // Recolhida: so o icone do app, que expande ao clicar.
                 if (headerIcon != null) DrawHeaderIcon(g, (w - HeaderIconSize) / 2);
                 else TextRenderer.DrawText(g, "»", glyphFont, headerRect, FgDim, flags | TextFormatFlags.HorizontalCenter);
+                if (newRelease != null)
+                {
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    DrawUpdateDot(g, (w + HeaderIconSize) / 2f, (ListTop - HeaderIconSize) / 2f);
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
+                }
             }
             else
             {
@@ -1522,6 +1530,7 @@ namespace WtSidebar
                 {
                     float cx = textX + textW + S(10), cy = ListTop / 2f, k = S(3);
                     g.DrawLines(pen, new[] { new PointF(cx - k, cy - k / 2), new PointF(cx, cy + k / 2), new PointF(cx + k, cy - k / 2) });
+                    if (newRelease != null) DrawUpdateDot(g, cx + k + S(9), cy);
                 }
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
 
@@ -1627,6 +1636,16 @@ namespace WtSidebar
                 g.DrawLine(p, w - 1, 0, w - 1, ClientSize.Height);
         }
 
+        // Bolinha de "atualizacao disponivel" no cabecalho, centrada em (cx, cy), com anel na cor do fundo.
+        void DrawUpdateDot(Graphics g, float cx, float cy)
+        {
+            float r = S(4), ring = S(2);
+            using (var b = new SolidBrush(HeaderBg))
+                g.FillEllipse(b, cx - r - ring, cy - r - ring, (r + ring) * 2, (r + ring) * 2);
+            using (var b = new SolidBrush(Accent))
+                g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
+        }
+
         void DrawHeaderIcon(Graphics g, int x)
         {
             var mode = g.InterpolationMode;
@@ -1648,7 +1667,9 @@ namespace WtSidebar
             else if (h >= 0 && h < tabs.Count) tip = tabs[h].Title;
             else if (h == HitNewTab) tip = collapsed ? T("Nova aba (botão direito: perfis)", "New tab (right click: profiles)") : T("Nova aba", "New tab");
             else if (h == HitProfileMenu) tip = T("Abrir perfil", "Open profile");
-            else if (h == HitHeaderMenu) tip = T("Menu do WT Sidebar", "WT Sidebar menu");
+            else if (h == HitHeaderMenu) tip = newRelease != null
+                ? string.Format(T("Menu do WT Sidebar (versão {0} disponível)", "WT Sidebar menu (version {0} available)"), newRelease.Tag)
+                : T("Menu do WT Sidebar", "WT Sidebar menu");
             else if (h == HitToggle) tip = collapsed ? T("Expandir (Ctrl+Shift+B)", "Expand (Ctrl+Shift+B)") : T("Recolher (Ctrl+Shift+B)", "Collapse (Ctrl+Shift+B)");
             toolTip.SetToolTip(this, tip);
             Invalidate();
