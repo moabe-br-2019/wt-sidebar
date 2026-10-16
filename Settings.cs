@@ -43,6 +43,7 @@ namespace WtSidebar
         public int Width { get; set; }
         public bool StartCollapsed { get; set; }
         public bool TrayIcon { get; set; }
+        public bool AgentSound { get; set; }
         public List<AgentCommand> Agents { get; set; }
 
         public AppSettings()
@@ -50,6 +51,7 @@ namespace WtSidebar
             Language = "auto";
             AutoUpdate = true;
             TrayIcon = true;
+            AgentSound = true;
             Width = 220;
             Agents = new List<AgentCommand>
             {
@@ -138,6 +140,7 @@ namespace WtSidebar
         readonly CheckBox startWithWindows = new CheckBox();
         readonly CheckBox autoUpdate = new CheckBox();
         readonly CheckBox trayIcon = new CheckBox();
+        readonly CheckBox agentSound = new CheckBox();
         readonly NumericUpDown width = new NumericUpDown();
         readonly CheckBox startCollapsed = new CheckBox();
         readonly DataGridView agents = new DataGridView();
@@ -160,7 +163,7 @@ namespace WtSidebar
             BackColor = Back;
             ForeColor = Fg;
             Font = new Font("Segoe UI", 12f * scale, GraphicsUnit.Pixel);
-            ClientSize = new Size(S(460), S(550));
+            ClientSize = new Size(S(460), S(580));
 
             int x = S(20), y = S(18), w = ClientSize.Width - S(40);
 
@@ -185,6 +188,7 @@ namespace WtSidebar
             AddCheck(startWithWindows, L.T("Iniciar com o Windows", "Start with Windows"), AppSettings.StartWithWindows, x, ref y);
             AddCheck(trayIcon, L.T("Mostrar ícone na área de notificação", "Show icon in the notification area"), current.TrayIcon, x, ref y);
             AddCheck(autoUpdate, L.T("Buscar atualizações automaticamente", "Check for updates automatically"), current.AutoUpdate, x, ref y);
+            AddCheck(agentSound, L.T("Notificar quando o Claude Code ou o Codex terminar", "Notify when Claude Code or Codex finishes"), current.AgentSound, x, ref y);
             y += S(10);
 
             AddLabel(L.T("Comandos de agente (menu ⌄ ao lado de Nova aba)", "Agent commands (⌄ menu next to New tab)"), x, y);
@@ -291,6 +295,7 @@ namespace WtSidebar
                 StartCollapsed = startCollapsed.Checked,
                 AutoUpdate = autoUpdate.Checked,
                 TrayIcon = trayIcon.Checked,
+                AgentSound = agentSound.Checked,
                 Agents = new List<AgentCommand>()
             };
             foreach (DataGridViewRow row in agents.Rows)

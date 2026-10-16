@@ -35,6 +35,7 @@ namespace WtSidebar
 
     class TabInfo
     {
+        public string Key;
         public string Title;
         public bool Selected;
         public AutomationElement Element;
@@ -155,7 +156,7 @@ namespace WtSidebar
             SetupTrayIcon();
             updateItem.Click += delegate { CheckUpdatesAsync(true); };
             findTimer.Interval = 1000;
-            findTimer.Tick += delegate { EnsureAttached(); KeepAboveTerminal(); };
+            findTimer.Tick += delegate { EnsureAttached(); KeepAboveTerminal(); NotifyStoppedAgents(); };
         }
 
         static string T(string pt, string en) { return L.T(pt, en); }
@@ -261,6 +262,8 @@ namespace WtSidebar
                     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
                 if (show != null) show.Invoke(trayIcon, null);
             };
+            trayIcon.BalloonTipClicked += delegate { OnNotificationClicked(); };
+            trayIcon.BalloonTipClosed += delegate { HideNotificationTray(); };
             trayIcon.Visible = settings.TrayIcon;
         }
 
@@ -362,9 +365,17 @@ namespace WtSidebar
 
         void EnsureAttached()
         {
-            if (wt != IntPtr.Zero && Native.IsWindow(wt) && Native.IsWindowVisible(wt)) return;
+            if (wt != IntPtr.Zero && Native.IsWindow(wt) && Native.IsWindowVisible(wt))
+            {
+                // Voltou da area de notificacao sem avisar (nem sempre chega MINIMIZEEND): mostra a sidebar.
+                if (!Visible && !Native.IsIconic(wt)) Reposition();
+                return;
+            }
             var h = FindTerminalWindow();
             if (h == wt) return;
+            // Terminal escondido (ex.: minimizado para a area de notificacao): continua ligado a ele e lendo
+            // as abas, senao o aviso de agente parado nao sai justamente quando a pessoa saiu do terminal.
+            if (h == IntPtr.Zero && wt != IntPtr.Zero && Native.IsWindow(wt)) return;
             AttachTo(h);
         }
 
@@ -786,7 +797,7 @@ namespace WtSidebar
                     if (r.Left < lastLeft) inPlace = false;
                     lastLeft = r.Left;
                 }
-                var t = new TabInfo { Title = el.Current.Name, Selected = selected, Element = el };
+                var t = new TabInfo { Key = key, Title = el.Current.Name, Selected = selected, Element = el };
                 if (canSample)
                 {
                     Color bg = SampleTabColor(el, key, selected);
@@ -880,8 +891,100 @@ namespace WtSidebar
         {
             tabs = list;
             tabsSignature = signature;
+            TrackAgentState();
             ClampScroll();
             Invalidate();
+        }
+
+        // ---------- aviso quando o agente termina ----------
+
+        // Claude Code (◐◓◑◒) e Codex (spinner braille) giram um simbolo no titulo enquanto trabalham.
+        // Quando a aba para de girar, o agente terminou ou esta esperando uma resposta.
+        static bool IsWorkingMarker(char c)
+        {
+            return c == '◐' || c == '◓' || c == '◑' || c == '◒' || (c > '⠀' && c <= '⣿');
+        }
+
+        readonly HashSet<string> workingTabs = new HashSet<string>();
+        readonly Dictionary<string, DateTime> stoppedTabs = new Dictionary<string, DateTime>(); // parou de girar em
+        static readonly TimeSpan StopDelay = TimeSpan.FromSeconds(1.5); // ignora pausas curtas entre etapas
+
+        void TrackAgentState()
+        {
+            if (tabs.Count == 0) return; // troca de janela ou menu aberto: nao e o fim das abas
+            var present = new HashSet<string>();
+            foreach (var t in tabs)
+            {
+                if (t.Key == null) continue;
+                present.Add(t.Key);
+                char marker;
+                CleanTitle(t.Title, out marker);
+                if (IsWorkingMarker(marker))
+                {
+                    workingTabs.Add(t.Key);
+                    stoppedTabs.Remove(t.Key);
+                }
+                else if (workingTabs.Remove(t.Key))
+                    stoppedTabs[t.Key] = DateTime.UtcNow;
+            }
+            workingTabs.IntersectWith(present);
+            foreach (string key in new List<string>(stoppedTabs.Keys))
+                if (!present.Contains(key)) stoppedTabs.Remove(key);
+        }
+
+        // Chamado pelo findTimer (1 s): avisa das abas paradas ha mais de StopDelay.
+        void NotifyStoppedAgents()
+        {
+            if (stoppedTabs.Count == 0) return;
+            var stopped = new List<TabInfo>();
+            var now = DateTime.UtcNow;
+            foreach (var pair in new List<KeyValuePair<string, DateTime>>(stoppedTabs))
+            {
+                if (now - pair.Value < StopDelay) continue;
+                stoppedTabs.Remove(pair.Key);
+                // Nao avisa da aba que a pessoa esta olhando.
+                var tab = tabs.Find(t => t.Key == pair.Key);
+                bool watching = tab != null && tab.Selected && Native.GetForegroundWindow() == wt;
+                if (tab != null && !watching) stopped.Add(tab);
+            }
+            if (stopped.Count > 0 && settings.AgentSound) ShowAgentNotification(stopped);
+        }
+
+        string notifiedTabKey; // aba que o clique na notificacao abre
+        bool trayShownForNotification; // icone ligado so para a notificacao (desligado nas configuracoes)
+
+        // Notificacao do Windows pelo icone da area de notificacao; o Windows toca o som dela.
+        void ShowAgentNotification(List<TabInfo> stopped)
+        {
+            char marker;
+            string title = CleanTitle(stopped[0].Title, out marker).Trim();
+            if (title.Length == 0) title = "WT Sidebar";
+            if (stopped.Count > 1) title += string.Format(T(" e mais {0}", " and {0} more"), stopped.Count - 1);
+            notifiedTabKey = stopped[0].Key;
+            if (!trayIcon.Visible)
+            {
+                trayIcon.Visible = true;
+                trayShownForNotification = true;
+            }
+            trayIcon.ShowBalloonTip(10000, title,
+                T("Terminou ou está esperando sua resposta.", "Finished or waiting for your reply."), ToolTipIcon.None);
+        }
+
+        void OnNotificationClicked()
+        {
+            HideNotificationTray();
+            string key = notifiedTabKey;
+            notifiedTabKey = null;
+            ShowTerminal();
+            int index = key == null ? -1 : tabs.FindIndex(t => t.Key == key);
+            if (index >= 0) SelectTab(index);
+        }
+
+        void HideNotificationTray()
+        {
+            if (!trayShownForNotification) return;
+            trayShownForNotification = false;
+            trayIcon.Visible = settings.TrayIcon;
         }
 
         void SelectTab(int index)
