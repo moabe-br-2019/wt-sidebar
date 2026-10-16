@@ -188,7 +188,7 @@ namespace WtSidebar
             AddCheck(startWithWindows, L.T("Iniciar com o Windows", "Start with Windows"), AppSettings.StartWithWindows, x, ref y);
             AddCheck(trayIcon, L.T("Mostrar ícone na área de notificação", "Show icon in the notification area"), current.TrayIcon, x, ref y);
             AddCheck(autoUpdate, L.T("Buscar atualizações automaticamente", "Check for updates automatically"), current.AutoUpdate, x, ref y);
-            AddCheck(agentSound, L.T("Notificar quando o Claude Code ou o Codex terminar", "Notify when Claude Code or Codex finishes"), current.AgentSound, x, ref y);
+            AddCheck(agentSound, L.T("Notificar quando o Claude Code terminar", "Notify when Claude Code finishes"), current.AgentSound, x, ref y);
             y += S(10);
 
             AddLabel(L.T("Comandos de agente (menu ⌄ ao lado de Nova aba)", "Agent commands (⌄ menu next to New tab)"), x, y);

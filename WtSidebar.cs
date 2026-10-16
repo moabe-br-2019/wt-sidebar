@@ -898,11 +898,11 @@ namespace WtSidebar
 
         // ---------- aviso quando o agente termina ----------
 
-        // Claude Code (◐◓◑◒) e Codex (spinner braille) giram um simbolo no titulo enquanto trabalham.
-        // Quando a aba para de girar, o agente terminou ou esta esperando uma resposta.
+        // O Claude Code gira ◐◓◑◒ no titulo enquanto trabalha.
+        // Quando a aba para de girar, ele terminou ou esta esperando uma resposta.
         static bool IsWorkingMarker(char c)
         {
-            return c == '◐' || c == '◓' || c == '◑' || c == '◒' || (c > '⠀' && c <= '⣿');
+            return c == '◐' || c == '◓' || c == '◑' || c == '◒';
         }
 
         readonly HashSet<string> workingTabs = new HashSet<string>();
