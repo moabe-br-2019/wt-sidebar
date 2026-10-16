@@ -155,7 +155,7 @@ namespace WtSidebar
             SetupTrayIcon();
             updateItem.Click += delegate { CheckUpdatesAsync(true); };
             findTimer.Interval = 1000;
-            findTimer.Tick += delegate { EnsureAttached(); if (!dragging) TraceState("tick"); };
+            findTimer.Tick += delegate { EnsureAttached(); KeepAboveTerminal(); if (!dragging) TraceState("tick"); };
         }
 
         static string T(string pt, string en) { return L.T(pt, en); }
@@ -465,7 +465,7 @@ namespace WtSidebar
         {
             if (evt == Native.EVENT_SYSTEM_FOREGROUND)
             {
-                if (hwnd == wt) SetHotkey(true);
+                if (hwnd == wt) { SetHotkey(true); KeepAboveTerminal(); }
                 else if (hwnd != Handle) SetHotkey(false);
                 return;
             }
@@ -640,6 +640,22 @@ namespace WtSidebar
                 Invalidate();
             }
             if (!Visible) Show();
+            KeepAboveTerminal();
+        }
+
+        // O sidebar e janela "owned" do terminal, mas o Windows nem sempre o leva junto quando o terminal
+        // sobe na ordem das janelas (ex.: volta do minimizado antes do sidebar reaparecer). Ai outra janela
+        // fica entre os dois e cobre o sidebar. Recoloca o sidebar logo acima do terminal.
+        void KeepAboveTerminal()
+        {
+            if (!Visible || wt == IntPtr.Zero || !Native.IsWindow(wt)) return;
+            IntPtr above = Native.GetWindow(wt, Native.GW_HWNDPREV);
+            if (above == Handle) return;
+            // Inserir depois de uma janela topmost tornaria o sidebar topmost; o topo da faixa normal basta.
+            if (above == IntPtr.Zero || (Native.GetWindowLong(above, Native.GWL_EXSTYLE) & Native.WS_EX_TOPMOST) != 0)
+                above = Native.HWND_TOP;
+            Native.SetWindowPos(Handle, above, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
         }
 
         void ToggleCollapse()
@@ -1804,7 +1820,11 @@ namespace WtSidebar
         public const int SW_MAXIMIZE = 3;
         public const int SW_SHOW = 5;
         public const int SW_RESTORE = 9;
-        public const uint SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+        public static readonly IntPtr HWND_TOP = IntPtr.Zero;
+        public const uint GW_HWNDPREV = 3;
+        public const int GWL_EXSTYLE = -20;
+        public const int WS_EX_TOPMOST = 0x8;
         public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
         public const int DWMWA_CLOAKED = 14;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
@@ -1832,6 +1852,8 @@ namespace WtSidebar
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
         [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
         [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
+        [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+        [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
